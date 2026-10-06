@@ -20,6 +20,8 @@ README.md: sysclean.8
 	>$@
 
 regress: run-regress-perl-syntax \
+	run-regress-perl-syntax-stubs \
+	run-regress-apply \
 	run-regress-man-lint \
 	run-regress-man-readme \
 	run-regress-man-date
@@ -28,6 +30,16 @@ regress: run-regress-perl-syntax \
 run-regress-perl-syntax:
 	@echo TEST: perl syntax
 	@perl -c sysclean.pl
+
+# check perl syntax without the OpenBSD::* modules (using the test stubs)
+run-regress-perl-syntax-stubs:
+	@echo TEST: perl syntax (stubs)
+	@perl -Iregress/stubs -c sysclean.pl
+
+# check the apply mode helper logic
+run-regress-apply:
+	@echo TEST: apply mode logic
+	@perl -Iregress/stubs regress/apply.t
 
 # check man page
 run-regress-man-lint:
@@ -48,10 +60,9 @@ run-regress-man-readme:
 run-regress-man-date:
 	@echo TEST: man page date
 	@if [ -d .git ]; then \
-		grep -qF -- \
-			"$$(date -r $$(git log -1 --format=%ct sysclean.8) \
-				+'.Dd %B %d, %Y')" \
-			sysclean.8 ; \
+		d="$$(date -r $$(git log -1 --format=%ct sysclean.8) \
+			+'.Dd %B %d, %Y' | sed -e 's/ 0/ /')"; \
+		grep -qF -- "$$d" sysclean.8 ; \
 	elif [ -d .got ]; then \
 		grep -qF -- \
 			"$$(got log -l 1 sysclean.8 \
