@@ -13,8 +13,8 @@ our @EXPORT = qw(pledge);
 our @PROMISES;
 
 sub pledge {
-	@PROMISES = @_;
-	return 1;
+    @PROMISES = @_;
+    return 1;
 }
 
 1;

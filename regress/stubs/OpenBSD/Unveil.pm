@@ -13,12 +13,12 @@ our @UNVEILS;
 our $LOCKED = 0;
 
 sub unveil {
-	if (scalar(@_) == 0) {
-		$LOCKED = 1;
-		return 1;
-	}
-	push @UNVEILS, [ @_ ];
-	return 1;
+    if ( scalar(@_) == 0 ) {
+        $LOCKED = 1;
+        return 1;
+    }
+    push @UNVEILS, [@_];
+    return 1;
 }
 
 1;

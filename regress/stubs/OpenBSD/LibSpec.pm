@@ -8,8 +8,8 @@ use strict;
 use warnings;
 
 sub from_string {
-	my ($class, $string) = @_;
-	return bless { string => $string }, $class;
+    my ( $class, $string ) = @_;
+    return bless { string => $string }, $class;
 }
 
 sub is_better { return 0 }

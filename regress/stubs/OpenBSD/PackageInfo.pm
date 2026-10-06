@@ -10,7 +10,7 @@ use Exporter 'import';
 
 our @EXPORT = qw(lock_db installed_packages);
 
-sub lock_db { return 1 }
+sub lock_db            { return 1 }
 sub installed_packages { return () }
 
 1;

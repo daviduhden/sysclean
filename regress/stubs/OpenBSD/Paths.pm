@@ -8,6 +8,6 @@ use strict;
 use warnings;
 
 sub srclocatedb { return '/nonexistent' }
-sub xlocatedb { return '/nonexistent' }
+sub xlocatedb   { return '/nonexistent' }
 
 1;
