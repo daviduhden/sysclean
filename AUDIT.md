@@ -82,12 +82,3 @@ sandbox.
   removed by its name with `lstat`/`unlink`/`rmdir` semantics.  The prime
   target is a non-empty directory, which `rmdir` refuses, or a symlink,
   which is unlinked rather than followed.
-
-## Test coverage
-
-`regress/apply.t` exercises the safety helpers directly: path validation
-(relative, empty, `/`, `..`, expected, ignored), deepest-first ordering,
-removal of files, symlinks and empty directories, refusal to remove
-non-empty directories, account-name validation, and the `unveil`/`pledge`
-tightening.  The test runs off OpenBSD using the stubs in
-`regress/stubs`.

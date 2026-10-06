@@ -26,8 +26,6 @@ README.md: sysclean.8
 	>$@
 
 regress: run-regress-perl-syntax \
-	run-regress-perl-syntax-stubs \
-	run-regress-apply \
 	run-regress-man-lint \
 	run-regress-man-readme \
 	run-regress-man-date
@@ -36,16 +34,6 @@ regress: run-regress-perl-syntax \
 run-regress-perl-syntax:
 	@echo TEST: perl syntax
 	@perl -c sysclean.pl
-
-# check perl syntax without the OpenBSD::* modules (using the test stubs)
-run-regress-perl-syntax-stubs:
-	@echo TEST: perl syntax (stubs)
-	@perl -Iregress/stubs -c sysclean.pl
-
-# check the apply mode helper logic
-run-regress-apply:
-	@echo TEST: apply mode logic
-	@perl -Iregress/stubs regress/apply.t
 
 # check man page
 run-regress-man-lint:

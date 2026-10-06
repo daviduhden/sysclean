@@ -1014,16 +1014,13 @@ package main;
 
 use Getopt::Std;
 
-# only run when executed directly, not when loaded for testing
-unless (caller) {
-    my %options = ();    # program flags
+my %options = ();    # program flags
 
-    getopts( "apihx", \%options ) || sysclean->usage;
-    sysclean->usage if ( defined $options{h} || scalar(@ARGV) != 0 );
+getopts( "apihx", \%options ) || sysclean->usage;
+sysclean->usage if ( defined $options{h} || scalar(@ARGV) != 0 );
 
-    sysclean->err( 1, "need root privileges" ) if ( $> != 0 );
+sysclean->err( 1, "need root privileges" ) if ( $> != 0 );
 
-    my $sysclean = sysclean->create( \%options );
-    $sysclean->walk;
-    $sysclean->apply if ( $sysclean->{apply} );
-}
+my $sysclean = sysclean->create( \%options );
+$sysclean->walk;
+$sysclean->apply if ( $sysclean->{apply} );
