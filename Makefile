@@ -1,4 +1,10 @@
+# bake-format off
 #	$OpenBSD$
+#
+# This is a BSD makefile (bmake).  It relies on .if/.else/.endif and on
+# .include <bsd.prog.mk>, which GNU-make tools such as mbake cannot parse.
+# The "bake-format off" directive on the first line tells mbake to leave
+# the file untouched so that both formatters and bmake stay happy.
 
 MAN=	sysclean.8
 
