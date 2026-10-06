@@ -3,6 +3,7 @@
 # $OpenBSD$
 #
 # Copyright (c) 2016-2025 Sebastien Marie <semarie@kapouay.eu.org>
+# Copyright (c) 2026 David Uhden Collado <daviduhden@gmail.com>
 #
 # Permission to use, copy, modify, and distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
