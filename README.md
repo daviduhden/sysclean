@@ -2,13 +2,14 @@ SYSCLEAN(8) - System Manager's Manual
 
 # NAME
 
-**sysclean** - list obsolete elements between OpenBSD upgrades
+**sysclean** - list and purge obsolete elements between OpenBSD upgrades
 
 # SYNOPSIS
 
 **sysclean**
-[**-a** | **-p**]
+[**-a** | **-p**]
 [**-i**]
+[**-x**]
 
 # DESCRIPTION
 
@@ -23,9 +24,13 @@ upgrades.
 compares a reference installation against the currently installed elements,
 taking files from both the base system and packages into account.
 
+By default,
 **sysclean**
 is a read-only tool.
 It does not remove anything on the system.
+This can be changed with the
+**-x**
+option, which applies the reported cleanup.
 
 By default,
 **sysclean**
@@ -53,6 +58,28 @@ The options are as follows:
 > Package mode.
 > **sysclean**
 > will output package names that are using obsolete files.
+
+**-x**
+
+> Apply mode.
+> **sysclean**
+> will remove the obsolete elements it reports instead of only listing them.
+> Files are unlinked and obsolete directories are removed with
+> rmdir(2)
+> only when they are empty.
+> Obsolete users and groups are removed with
+> userdel(8)
+> and
+> groupdel(8);
+> their home directories are preserved.
+
+> The
+> **-x**
+> option is not compatible with the
+> **-i**
+> and
+> **-p**
+> options.
 
 # ENVIRONMENT
 
@@ -116,6 +143,12 @@ Obtain a list of users and groups that can safely be removed
 	@user _mpd:560:_mpd::/var/spool/mpd:/sbin/nologin
 	@group _mpd:560
 
+Remove the obsolete files reported (files used by installed packages are
+excluded by default):
+
+	# sysclean -x
+	unlink /usr/lib/libc.so.83.0
+
 # SEE ALSO
 
 pkg\_info(1),
@@ -137,4 +170,26 @@ in 2016.
 was written by
 Sebastien Marie <[semarie@kapouay.eu.org](mailto:semarie@kapouay.eu.org)>.
 
-OpenBSD 7.8 - March 10, 2024 - SYSCLEAN(8)
+# CAVEATS
+
+The
+**-x**
+option modifies the system.
+Obsolete elements should be reviewed by first running
+**sysclean**
+without
+**-x**.
+
+**sysclean**
+never removes a non-empty directory and never follows symbolic links.
+
+# FORK
+
+This manual page is part of a fork of
+**sysclean**
+maintained at
+[https://github.com/daviduhden/sysclean](https://github.com/daviduhden/sysclean).
+The canonical upstream repository remains
+[https://codeberg.org/semarie/sysclean/](https://codeberg.org/semarie/sysclean/).
+
+OpenBSD 7.8 - October 6, 2026 - SYSCLEAN(8)

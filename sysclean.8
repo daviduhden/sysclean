@@ -14,16 +14,17 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd March 10, 2024
+.Dd October 6, 2026
 .Dt SYSCLEAN 8
 .Os
 .Sh NAME
 .Nm sysclean
-.Nd list obsolete elements between OpenBSD upgrades
+.Nd list and purge obsolete elements between OpenBSD upgrades
 .Sh SYNOPSIS
 .Nm
 .Op Fl a | p
 .Op Fl i
+.Op Fl x
 .Sh DESCRIPTION
 .Nm
 is a
@@ -36,9 +37,13 @@ upgrades.
 compares a reference installation against the currently installed elements,
 taking files from both the base system and packages into account.
 .Pp
+By default,
 .Nm
 is a read-only tool.
 It does not remove anything on the system.
+This can be changed with the
+.Fl x
+option, which applies the reported cleanup.
 .Pp
 By default,
 .Nm
@@ -61,6 +66,26 @@ will include filenames that are ignored by default, using
 Package mode.
 .Nm
 will output package names that are using obsolete files.
+.It Fl x
+Apply mode.
+.Nm
+will remove the obsolete elements it reports instead of only listing them.
+Files are unlinked and obsolete directories are removed with
+.Xr rmdir 2
+only when they are empty.
+Obsolete users and groups are removed with
+.Xr userdel 8
+and
+.Xr groupdel 8 ;
+their home directories are preserved.
+.Pp
+The
+.Fl x
+option is not compatible with the
+.Fl i
+and
+.Fl p
+options.
 .El
 .Sh ENVIRONMENT
 .Bl -tag -width "PKG_DBDIR"
@@ -124,6 +149,13 @@ Obtain a list of users and groups that can safely be removed
 @user _mpd:560:_mpd::/var/spool/mpd:/sbin/nologin
 @group _mpd:560
 .Ed
+.Pp
+Remove the obsolete files reported (files used by installed packages are
+excluded by default):
+.Bd -literal -offset indent
+# sysclean -x
+unlink /usr/lib/libc.so.83.0
+.Ed
 .Sh SEE ALSO
 .Xr pkg_info 1 ,
 .Xr sysmerge 8
@@ -140,3 +172,21 @@ in 2016.
 .Nm
 was written by
 .An Sebastien Marie Aq Mt semarie@kapouay.eu.org .
+.Sh CAVEATS
+The
+.Fl x
+option modifies the system.
+Obsolete elements should be reviewed by first running
+.Nm
+without
+.Fl x .
+.Pp
+.Nm
+never removes a non-empty directory and never follows symbolic links.
+.Sh FORK
+This manual page is part of a fork of
+.Nm
+maintained at
+.Lk https://github.com/daviduhden/sysclean .
+The canonical upstream repository remains
+.Lk https://codeberg.org/semarie/sysclean/ .
