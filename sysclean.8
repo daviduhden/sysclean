@@ -83,10 +83,15 @@ their home directories are preserved.
 The
 .Fl x
 option is not compatible with the
-.Fl i
-and
 .Fl p
-options.
+option.
+When it is used together with
+.Fl i ,
+files that are normally ignored through
+.Pa /etc/changelist
+and
+.Pa /etc/sysclean.ignore
+also become removal candidates.
 .El
 .Sh ENVIRONMENT
 .Bl -tag -width "PKG_DBDIR"

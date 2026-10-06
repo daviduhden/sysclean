@@ -49,9 +49,10 @@ sub create( $base, $options ) {
     sysclean->err( 1, "-x is not compatible with package mode (-p)" )
       if ( $apply && defined $$options{p} );
 
-    # with -i, user ignore files (including /etc/changelist) are not
-    # applied, so previously ignored files would be removed
-    sysclean->err( 1, "-x is not compatible with -i" )
+    # with -i the user ignore files (including /etc/changelist) are not
+    # applied, so files normally ignored by the administrator become
+    # removal candidates: allowed, but worth a warning
+    sysclean->warn("-x with -i may remove files normally ignored")
       if ( $apply && !$with_ignored );
 
     sysclean->warn("-x with -a may remove libraries used by installed packages")

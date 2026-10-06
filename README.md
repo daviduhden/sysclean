@@ -76,10 +76,15 @@ The options are as follows:
 > The
 > **-x**
 > option is not compatible with the
-> **-i**
-> and
 > **-p**
-> options.
+> option.
+> When it is used together with
+> **-i**,
+> files that are normally ignored through
+> */etc/changelist*
+> and
+> */etc/sysclean.ignore*
+> also become removal candidates.
 
 # ENVIRONMENT
 
