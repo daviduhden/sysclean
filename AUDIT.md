@@ -53,6 +53,12 @@ The apply path enforces the following invariants:
   obsolete elements and removed.  The hardcoded ignored directories
   (`/home`, `/var/log`, ...) are always respected.  `-x -a` warns because
   the all-files listing may include libraries used by installed packages.
+* **User recommendations are applied.**  Obsolete users and groups are
+  removed with `userdel(8)`/`groupdel(8)` (home directories preserved),
+  and system users whose group, login class, home directory or shell
+  differs from the reference are updated with `usermod(8)`.  Account
+  names are validated before use and the values applied come from the
+  trusted reference installation (base and package metadata).
 
 ## Sandbox (`pledge(2)` / `unveil(2)`)
 

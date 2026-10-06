@@ -72,6 +72,9 @@ The options are as follows:
 > and
 > groupdel(8);
 > their home directories are preserved.
+> System users whose group, login class, home directory or shell differs
+> from the reference installation are updated with
+> usermod(8).
 
 > The
 > **-x**

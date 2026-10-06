@@ -79,6 +79,9 @@ Obsolete users and groups are removed with
 and
 .Xr groupdel 8 ;
 their home directories are preserved.
+System users whose group, login class, home directory or shell differs
+from the reference installation are updated with
+.Xr usermod 8 .
 .Pp
 The
 .Fl x

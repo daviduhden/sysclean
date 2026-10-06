@@ -79,11 +79,12 @@ sub new( $class, $with_ignored, $apply ) {
     $self->{apply}   = $apply ? 1 : 0;
     $self->{actions} = [];
     $self->{removed} = {
-        files  => 0,
-        dirs   => 0,
-        users  => 0,
-        groups => 0,
-        failed => 0,
+        files    => 0,
+        dirs     => 0,
+        users    => 0,
+        groups   => 0,
+        modified => 0,
+        failed   => 0,
     };
 
     $self->init_ignored;
@@ -605,7 +606,21 @@ sub walk_users($self) {
                   if ( $home ne $uf->{home} );
                 push @changed, "shell is $shell, should be $uf->{shell}"
                   if ( $shell ne $uf->{shell} );
-                print( '@user ', $user, " => ", join( ' / ', @changed ), "\n" );
+
+                if ( $self->{apply} ) {
+
+                    # apply the recommendations with usermod(8)
+                    $self->queue_user_mod(
+                        $name,
+                        $self->user_mod_args(
+                            $uf, $gid, $gname, $class, $home, $shell
+                        )
+                    );
+                }
+                else {
+                    print( '@user ', $user,
+                        " => ", join( ' / ', @changed ), "\n" );
+                }
             }
             else {
                 # not expected user
@@ -672,6 +687,36 @@ sub queue_user( $self, $name ) {
 sub queue_group( $self, $name ) {
     return unless $self->{apply};
     push @{ $self->{actions} }, { type => 'group', name => $name };
+}
+
+# record a modified user and the usermod(8) options to apply
+sub queue_user_mod( $self, $name, @opts ) {
+    return unless $self->{apply};
+    return unless @opts;
+    push @{ $self->{actions} },
+      { type => 'user_mod', name => $name, opts => [@opts] };
+}
+
+# build usermod(8) options restoring the expected fields of a modified user
+sub user_mod_args( $self, $uf, $gid, $gname, $class, $home, $shell ) {
+    my @opts = ();
+
+    # primary group: prefer the expected group name over the numeric gid
+    if (   ( defined $uf->{group} && $gname ne $uf->{group} )
+        || ( defined $uf->{gid} && $gid != $uf->{gid} ) )
+    {
+        my $want = defined $uf->{group} ? $uf->{group} : $uf->{gid};
+        push @opts, '-g', $want;
+    }
+
+    push @opts, '-L', $uf->{class}
+      if ( defined $uf->{class} && $class ne $uf->{class} );
+    push @opts, '-d', $uf->{home}
+      if ( defined $uf->{home} && $home ne $uf->{home} );
+    push @opts, '-s', $uf->{shell}
+      if ( defined $uf->{shell} && $shell ne $uf->{shell} );
+
+    return @opts;
 }
 
 # number of path separators, used to order removals deepest-first
@@ -788,8 +833,31 @@ sub remove_group( $self, $name ) {
     return 0;
 }
 
+# apply the recommended changes to a modified system user with usermod(8)
+sub modify_user( $self, $name, $opts ) {
+    if ( !valid_account_name($name) ) {
+        $self->warn("not modifying user '$name': invalid name");
+        $self->{removed}{failed}++;
+        return 0;
+    }
+    if ( !-x '/usr/sbin/usermod' ) {
+        $self->warn("not modifying user '$name': /usr/sbin/usermod missing");
+        $self->{removed}{failed}++;
+        return 0;
+    }
+
+    if ( system( '/usr/sbin/usermod', @$opts, $name ) == 0 ) {
+        logi("usermod $name");
+        $self->{removed}{modified}++;
+        return 1;
+    }
+    $self->warn("usermod '$name' failed");
+    $self->{removed}{failed}++;
+    return 0;
+}
+
 # tighten the sandbox just before applying changes
-sub prepare_apply( $self, $paths, $users, $groups ) {
+sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
     use File::Basename;
 
     # grant write access only to the directories holding targeted paths
@@ -804,13 +872,15 @@ sub prepare_apply( $self, $paths, $users, $groups ) {
 
     my $promises = 'rpath wpath cpath getpw';
 
-    if ( scalar(@$users) + scalar(@$groups) > 0 ) {
+    if ( scalar(@$users) + scalar(@$groups) + scalar(@$user_mods) > 0 ) {
 
-        # userdel(8) and groupdel(8) are executed as child processes
+        # userdel(8), groupdel(8) and usermod(8) run as child processes
         unveil( '/usr/sbin/userdel', 'rx' )
           || $self->warn("unveil '/usr/sbin/userdel': $!");
         unveil( '/usr/sbin/groupdel', 'rx' )
           || $self->warn("unveil '/usr/sbin/groupdel': $!");
+        unveil( '/usr/sbin/usermod', 'rx' )
+          || $self->warn("unveil '/usr/sbin/usermod': $!");
         $promises .= ' proc exec';
     }
 
@@ -826,16 +896,20 @@ sub apply($self) {
       grep { $_->{type} eq 'user' } @{ $self->{actions} };
     my @groups = map { $_->{name} }
       grep { $_->{type} eq 'group' } @{ $self->{actions} };
+    my @user_mods =
+      grep { $_->{type} eq 'user_mod' } @{ $self->{actions} };
 
     # drop duplicate entries, preserving order
     my %seen = ();
-    @paths  = grep { !$seen{"p\0$_"}++ } @paths;
-    %seen   = ();
-    @users  = grep { !$seen{"u\0$_"}++ } @users;
-    %seen   = ();
-    @groups = grep { !$seen{"g\0$_"}++ } @groups;
+    @paths     = grep { !$seen{"p\0$_"}++ } @paths;
+    %seen      = ();
+    @users     = grep { !$seen{"u\0$_"}++ } @users;
+    %seen      = ();
+    @groups    = grep { !$seen{"g\0$_"}++ } @groups;
+    %seen      = ();
+    @user_mods = grep { !$seen{ $_->{name} }++ } @user_mods;
 
-    $self->prepare_apply( \@paths, \@users, \@groups );
+    $self->prepare_apply( \@paths, \@users, \@groups, \@user_mods );
 
     for my $path ( $self->sort_paths_deepest_first( \@paths ) ) {
         $self->remove_path($path);
@@ -846,14 +920,18 @@ sub apply($self) {
     for my $name (@groups) {
         $self->remove_group($name);
     }
+    for my $m (@user_mods) {
+        $self->modify_user( $m->{name}, $m->{opts} );
+    }
 
     my $r = $self->{removed};
     $self->note(
         sprintf(
-"removed %d file(s), %d director%s, %d user(s), %d group(s); %d failure(s)",
+"removed %d file(s), %d director%s, %d user(s), %d group(s), %d modified user(s); %d failure(s)",
             $r->{files},                   $r->{dirs},
             $r->{dirs} == 1 ? "y" : "ies", $r->{users},
-            $r->{groups},                  $r->{failed}
+            $r->{groups},                  $r->{modified},
+            $r->{failed}
         )
     );
 }
