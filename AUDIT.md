@@ -46,10 +46,12 @@ The apply path enforces the following invariants:
   `^[A-Za-z0-9_][A-Za-z0-9._-]*$`, which also rejects a leading `-` and
   therefore option injection.  `userdel` is called without `-r`, so home
   directories are preserved.
-* **Unsafe combinations are handled explicitly.**  `-x` is refused with
-  `-p` (informational package mode), and warns with `-i` (which exposes
-  files normally ignored through `/etc/changelist`) and with `-a` (the
-  all-files listing may include libraries used by installed packages).
+* **Ignored elements are always respected.**  `-x` is refused with `-p`
+  (informational package mode) but works with `-i`: in apply mode the
+  ignore files (`/etc/changelist`, `/etc/sysclean.ignore`) are always
+  honored, so `-i` never causes an ignored file to be removed.  `-x -a`
+  warns because the all-files listing may include libraries used by
+  installed packages.
 
 ## Sandbox (`pledge(2)` / `unveil(2)`)
 

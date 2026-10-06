@@ -37,9 +37,8 @@ sub subclass( $self, $options ) {
 
 # choose class for mode, depending on %options
 sub create( $base, $options ) {
-    my $with_ignored = !defined $$options{i};
-    my $apply        = defined $$options{x};
-    my $mode_count   = 0;
+    my $apply      = defined $$options{x};
+    my $mode_count = 0;
 
     $mode_count++   if ( defined $$options{a} );
     $mode_count++   if ( defined $$options{p} );
@@ -49,11 +48,12 @@ sub create( $base, $options ) {
     sysclean->err( 1, "-x is not compatible with package mode (-p)" )
       if ( $apply && defined $$options{p} );
 
-    # with -i the user ignore files (including /etc/changelist) are not
-    # applied, so files normally ignored by the administrator become
-    # removal candidates: allowed, but worth a warning
-    sysclean->warn("-x with -i may remove files normally ignored")
-      if ( $apply && !$with_ignored );
+    # apply mode must never remove ignored elements: the ignore files are
+    # honored even when -i (which disables them for listing) is given
+    my $with_ignored = !defined $$options{i} || $apply;
+
+    sysclean->warn("-x honors ignored files even with -i")
+      if ( $apply && defined $$options{i} );
 
     sysclean->warn("-x with -a may remove libraries used by installed packages")
       if ( $apply && defined $$options{a} );
