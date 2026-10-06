@@ -155,7 +155,7 @@ Remove the obsolete files reported (files used by installed packages are
 excluded by default):
 
 	# sysclean -x
-	unlink /usr/lib/libc.so.83.0
+	[INFO] unlink /usr/lib/libc.so.83.0
 
 # SEE ALSO
 

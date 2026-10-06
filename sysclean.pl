@@ -28,6 +28,15 @@ use v5.36;
 
 package sysclean;
 
+# logging helpers (same convention as the other tools)
+sub logi { print "[INFO] $_[0]\n" }
+sub logw { print STDERR "[WARN] $_[0]\n" }
+
+sub die_tool {
+    print STDERR "[ERROR] $_[0]\n";
+    exit 1;
+}
+
 # return subclass according to options
 sub subclass( $self, $options ) {
     return 'sysclean::allfiles' if ( defined $$options{a} );
@@ -96,19 +105,17 @@ sub usage($self) {
 
 # print error and exit
 sub err( $self, $exitcode, @rest ) {
-    print STDERR "$0: error: @rest\n";
-
-    exit $exitcode;
+    die_tool("@rest");
 }
 
 # print warning
 sub warn( $self, @rest ) {
-    print STDERR "$0: warn: @rest\n";
+    logw("@rest");
 }
 
 # print an informational message
 sub note( $self, @rest ) {
-    print STDERR "$0: @rest\n";
+    logi("@rest");
 }
 
 # initial list of ignored files and directories
@@ -709,7 +716,7 @@ sub remove_path( $self, $path ) {
 
         # never recurse: only empty directories are removed
         if ( rmdir($path) ) {
-            print("rmdir $path\n");
+            logi("rmdir $path");
             $self->{removed}{dirs}++;
             return 1;
         }
@@ -719,7 +726,7 @@ sub remove_path( $self, $path ) {
     }
 
     if ( unlink($path) ) {
-        print("unlink $path\n");
+        logi("unlink $path");
         $self->{removed}{files}++;
         return 1;
     }
@@ -749,7 +756,7 @@ sub remove_user( $self, $name ) {
     }
 
     if ( system( '/usr/sbin/userdel', $name ) == 0 ) {
-        print("userdel $name\n");
+        logi("userdel $name");
         $self->{removed}{users}++;
         return 1;
     }
@@ -772,7 +779,7 @@ sub remove_group( $self, $name ) {
     }
 
     if ( system( '/usr/sbin/groupdel', $name ) == 0 ) {
-        print("groupdel $name\n");
+        logi("groupdel $name");
         $self->{removed}{groups}++;
         return 1;
     }
