@@ -16,6 +16,12 @@
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #
+# This file is part of a fork of sysclean adding an explicit apply (-x) mode.
+# The canonical upstream repository is hosted on Codeberg:
+#   https://codeberg.org/semarie/sysclean/
+# Fork maintained at:
+#   https://github.com/daviduhden/sysclean
+#
 
 use v5.36;
 
@@ -33,19 +39,42 @@ sub subclass($self, $options)
 sub create($base, $options)
 {
 	my $with_ignored = !defined $$options{i};
+	my $apply = defined $$options{x};
 	my $mode_count = 0;
 
 	$mode_count++ if (defined $$options{a});
 	$mode_count++ if (defined $$options{p});
 	sysclean->usage if ($mode_count > 1);
 
-	return $base->subclass($options)->new($with_ignored);
+	# applying changes only makes sense for the file listings
+	sysclean->err(1, "-x is not compatible with package mode (-p)")
+	    if ($apply && defined $$options{p});
+
+	# with -i, user ignore files (including /etc/changelist) are not
+	# applied, so previously ignored files would be removed
+	sysclean->err(1, "-x is not compatible with -i")
+	    if ($apply && !$with_ignored);
+
+	sysclean->warn("-x with -a may remove libraries used by installed packages")
+	    if ($apply && defined $$options{a});
+
+	return $base->subclass($options)->new($with_ignored, $apply);
 }
 
 # constructor
-sub new($class, $with_ignored)
+sub new($class, $with_ignored, $apply)
 {
 	my $self = bless {}, $class;
+
+	$self->{apply} = $apply ? 1 : 0;
+	$self->{actions} = [];
+	$self->{removed} = {
+		files => 0,
+		dirs => 0,
+		users => 0,
+		groups => 0,
+		failed => 0,
+	};
 
 	$self->init_ignored;
 	$self->init;
@@ -61,7 +90,7 @@ sub new($class, $with_ignored)
 # print usage and exit
 sub usage($self)
 {
-	print "usage: $0 [ -a | -p ] [-i]\n";
+	print "usage: $0 [ -a | -p ] [-i] [-x]\n";
 	exit 1
 }
 
@@ -77,6 +106,12 @@ sub err($self, $exitcode, @rest)
 sub warn($self, @rest)
 {
 	print STDERR "$0: warn: @rest\n";
+}
+
+# print an informational message
+sub note($self, @rest)
+{
+	print STDERR "$0: @rest\n";
 }
 
 # initial list of ignored files and directories
@@ -121,6 +156,11 @@ sub init($self)
 	use OpenBSD::Pledge;
 	use OpenBSD::Unveil;
 
+	# in apply mode keep the unveil promise around so that write
+	# permissions can be granted to the directories holding the
+	# elements to remove once they are known
+	my $unveil = $self->{apply} ? ' unveil' : '';
+
 	lock_db(1);
 
 	unveil('/', 'r');
@@ -128,12 +168,12 @@ sub init($self)
 	unveil('/usr/bin/locate', 'rx');
 	unveil('/usr/sbin/rcctl', 'rx');
 
-	pledge('rpath getpw proc exec') || $self->err(1, "pledge");
+	pledge("rpath getpw proc exec$unveil") || $self->err(1, "pledge");
 	$self->add_expected_base;
 	$self->add_expected_dev;
 	$self->add_expected_rcctl;
 
-	pledge('rpath getpw') || $self->err(1, "pledge");
+	pledge("rpath getpw$unveil") || $self->err(1, "pledge");
 	$self->add_expected_users;
 	$self->add_expected_ports_info;
 }
@@ -518,7 +558,11 @@ sub walk_users($self)
 				print('@user ', $user, " => ", join(' / ', @changed), "\n");
 			} else {
 				# not expected user
-				print('@user ', $user, "\n");
+				if ($self->{apply}) {
+					$self->queue_user($name);
+				} else {
+					print('@user ', $user, "\n");
+				}
 			}
 		}
 	}
@@ -539,7 +583,11 @@ sub walk_groups($self)
 		    !exists($self->{groups}{$group})) {
 
 			# not expected group
-			print('@group ', $group, "\n");
+			if ($self->{apply}) {
+				$self->queue_group($name);
+			} else {
+				print('@group ', $group, "\n");
+			}
 		}
 	}
 	endgrent();
@@ -554,6 +602,218 @@ sub walk($self)
 
 
 #
+# apply mode helpers
+#
+
+# record an element for later removal (only when apply mode is enabled)
+sub queue_path($self, $filename)
+{
+	return unless $self->{apply};
+	push @{$self->{actions}}, { type => 'path', name => $filename };
+}
+
+sub queue_user($self, $name)
+{
+	return unless $self->{apply};
+	push @{$self->{actions}}, { type => 'user', name => $name };
+}
+
+sub queue_group($self, $name)
+{
+	return unless $self->{apply};
+	push @{$self->{actions}}, { type => 'group', name => $name };
+}
+
+# number of path separators, used to order removals deepest-first
+sub path_depth($path)
+{
+	my $depth = () = $path =~ m{/}g;
+	return $depth;
+}
+
+sub sort_paths_deepest_first($self, $paths)
+{
+	return sort {
+		path_depth($b) <=> path_depth($a) || $a cmp $b
+	} @$paths;
+}
+
+# return a reason when $path must not be removed, undef otherwise
+sub check_removable_path($self, $path)
+{
+	return "empty pathname" if (!defined($path) || $path eq '');
+	return "not an absolute pathname" if ($path !~ m{^/});
+	return "refusing to remove '/'" if ($path eq '/');
+	return "pathname contains a '..' component"
+	    if ($path =~ m{(?:^|/)\.\.(?:/|$)});
+	return "pathname is expected" if (exists $self->{expected}{$path});
+	return "pathname is ignored" if (exists $self->{ignored}{$path});
+	return undef;
+}
+
+# remove a single obsolete file, or an empty directory
+sub remove_path($self, $path)
+{
+	if (my $reason = $self->check_removable_path($path)) {
+		$self->warn("not removing '$path': $reason");
+		$self->{removed}{failed}++;
+		return 0;
+	}
+
+	# use lstat(2) so that symbolic links are removed, not followed
+	my @st = lstat($path);
+	if (!@st) {
+		$self->warn("lstat '$path': $!");
+		$self->{removed}{failed}++;
+		return 0;
+	}
+
+	if (-d _) {
+		# never recurse: only empty directories are removed
+		if (rmdir($path)) {
+			print("rmdir $path\n");
+			$self->{removed}{dirs}++;
+			return 1;
+		}
+		$self->warn("rmdir '$path': $!");
+		$self->{removed}{failed}++;
+		return 0;
+	}
+
+	if (unlink($path)) {
+		print("unlink $path\n");
+		$self->{removed}{files}++;
+		return 1;
+	}
+	$self->warn("unlink '$path': $!");
+	$self->{removed}{failed}++;
+	return 0;
+}
+
+# a user/group name that is safe to pass to userdel(8)/groupdel(8)
+sub valid_account_name($name)
+{
+	# reject names starting with '-' to avoid option injection
+	return defined($name) && $name =~ m{^[A-Za-z0-9_][A-Za-z0-9._-]*$};
+}
+
+# remove an obsolete user with userdel(8); the home directory is preserved
+sub remove_user($self, $name)
+{
+	if (!valid_account_name($name)) {
+		$self->warn("not removing user '$name': invalid name");
+		$self->{removed}{failed}++;
+		return 0;
+	}
+	if (!-x '/usr/sbin/userdel') {
+		$self->warn("not removing user '$name': /usr/sbin/userdel missing");
+		$self->{removed}{failed}++;
+		return 0;
+	}
+
+	if (system('/usr/sbin/userdel', $name) == 0) {
+		print("userdel $name\n");
+		$self->{removed}{users}++;
+		return 1;
+	}
+	$self->warn("userdel '$name' failed");
+	$self->{removed}{failed}++;
+	return 0;
+}
+
+# remove an obsolete group with groupdel(8)
+sub remove_group($self, $name)
+{
+	if (!valid_account_name($name)) {
+		$self->warn("not removing group '$name': invalid name");
+		$self->{removed}{failed}++;
+		return 0;
+	}
+	if (!-x '/usr/sbin/groupdel') {
+		$self->warn("not removing group '$name': /usr/sbin/groupdel missing");
+		$self->{removed}{failed}++;
+		return 0;
+	}
+
+	if (system('/usr/sbin/groupdel', $name) == 0) {
+		print("groupdel $name\n");
+		$self->{removed}{groups}++;
+		return 1;
+	}
+	$self->warn("groupdel '$name' failed");
+	$self->{removed}{failed}++;
+	return 0;
+}
+
+# tighten the sandbox just before applying changes
+sub prepare_apply($self, $paths, $users, $groups)
+{
+	use File::Basename;
+
+	# grant write access only to the directories holding targeted paths
+	my %dirs = ();
+	for my $path (@$paths) {
+		$dirs{dirname($path)} = 1;
+	}
+	for my $dir (keys %dirs) {
+		unveil($dir, 'rwc') ||
+		    $self->warn("unveil '$dir': $!");
+	}
+
+	my $promises = 'rpath wpath cpath getpw';
+
+	if (scalar(@$users) + scalar(@$groups) > 0) {
+		# userdel(8) and groupdel(8) are executed as child processes
+		unveil('/usr/sbin/userdel', 'rx') ||
+		    $self->warn("unveil '/usr/sbin/userdel': $!");
+		unveil('/usr/sbin/groupdel', 'rx') ||
+		    $self->warn("unveil '/usr/sbin/groupdel': $!");
+		$promises .= ' proc exec';
+	}
+
+	# no further unveil(2) calls are allowed after this point
+	unveil() || $self->warn("unveil lock: $!");
+	pledge($promises) || $self->err(1, "pledge");
+}
+
+sub apply($self)
+{
+	my @paths = map { $_->{name} }
+	    grep { $_->{type} eq 'path' } @{$self->{actions}};
+	my @users = map { $_->{name} }
+	    grep { $_->{type} eq 'user' } @{$self->{actions}};
+	my @groups = map { $_->{name} }
+	    grep { $_->{type} eq 'group' } @{$self->{actions}};
+
+	# drop duplicate entries, preserving order
+	my %seen = ();
+	@paths = grep { !$seen{"p\0$_"}++ } @paths;
+	%seen = ();
+	@users = grep { !$seen{"u\0$_"}++ } @users;
+	%seen = ();
+	@groups = grep { !$seen{"g\0$_"}++ } @groups;
+
+	$self->prepare_apply(\@paths, \@users, \@groups);
+
+	for my $path ($self->sort_paths_deepest_first(\@paths)) {
+		$self->remove_path($path);
+	}
+	for my $name (@users) {
+		$self->remove_user($name);
+	}
+	for my $name (@groups) {
+		$self->remove_group($name);
+	}
+
+	my $r = $self->{removed};
+	$self->note(sprintf(
+	    "removed %d file(s), %d director%s, %d user(s), %d group(s); %d failure(s)",
+	    $r->{files}, $r->{dirs}, $r->{dirs} == 1 ? "y" : "ies",
+	    $r->{users}, $r->{groups}, $r->{failed}));
+}
+
+
+#
 # specialized versions
 #
 
@@ -562,7 +822,8 @@ use parent -norequire, qw(sysclean);
 
 sub find_sub($self, $filename)
 {
-	print($filename, "\n");
+	$self->queue_path($filename);
+	print($filename, "\n") unless $self->{apply};
 }
 
 package sysclean::files;
@@ -601,7 +862,8 @@ sub find_sub($self, $filename)
 		}
 	}
 
-	print($filename, "\n");
+	$self->queue_path($filename);
+	print($filename, "\n") unless $self->{apply};
 }
 
 package sysclean::packages;
@@ -724,11 +986,16 @@ package main;
 
 use Getopt::Std;
 
-my %options = ();	# program flags
+# only run when executed directly, not when loaded for testing
+unless (caller) {
+	my %options = ();	# program flags
 
-getopts("apih", \%options) || sysclean->usage;
-sysclean->usage if (defined $options{h} || scalar(@ARGV) != 0);
+	getopts("apihx", \%options) || sysclean->usage;
+	sysclean->usage if (defined $options{h} || scalar(@ARGV) != 0);
 
-sysclean->err(1, "need root privileges") if ($> != 0);
+	sysclean->err(1, "need root privileges") if ($> != 0);
 
-sysclean->create(\%options)->walk;
+	my $sysclean = sysclean->create(\%options);
+	$sysclean->walk;
+	$sysclean->apply if ($sysclean->{apply});
+}
