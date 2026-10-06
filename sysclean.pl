@@ -48,12 +48,14 @@ sub create( $base, $options ) {
     sysclean->err( 1, "-x is not compatible with package mode (-p)" )
       if ( $apply && defined $$options{p} );
 
-    # apply mode must never remove ignored elements: the ignore files are
-    # honored even when -i (which disables them for listing) is given
-    my $with_ignored = !defined $$options{i} || $apply;
+    # in apply mode, -i selects whether the user ignore files are honored:
+    #   -x -i  -> ignored files are respected and never removed
+    #   -x     -> ignored files are removed like any other obsolete element
+    my $with_ignored = $apply ? defined $$options{i} : !defined $$options{i};
 
-    sysclean->warn("-x honors ignored files even with -i")
-      if ( $apply && defined $$options{i} );
+    sysclean->warn(
+        "-x: ignored files are not protected, use -i to respect them")
+      if ( $apply && !defined $$options{i} );
 
     sysclean->warn("-x with -a may remove libraries used by installed packages")
       if ( $apply && defined $$options{a} );

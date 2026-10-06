@@ -85,14 +85,16 @@ The
 option is not compatible with the
 .Fl p
 option.
-Ignored elements are never removed:
-the files listed in
+When
+.Fl i
+is used, elements ignored through
 .Pa /etc/changelist
 and
 .Pa /etc/sysclean.ignore
-are honored even when
-.Fl i
-is used.
+are respected and never removed;
+without
+.Fl i ,
+they are removed like any other obsolete element.
 .El
 .Sh ENVIRONMENT
 .Bl -tag -width "PKG_DBDIR"

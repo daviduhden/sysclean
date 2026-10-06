@@ -78,14 +78,16 @@ The options are as follows:
 > option is not compatible with the
 > **-p**
 > option.
-> Ignored elements are never removed:
-> the files listed in
+> When
+> **-i**
+> is used, elements ignored through
 > */etc/changelist*
 > and
 > */etc/sysclean.ignore*
-> are honored even when
-> **-i**
-> is used.
+> are respected and never removed;
+> without
+> **-i**,
+> they are removed like any other obsolete element.
 
 # ENVIRONMENT
 
