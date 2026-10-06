@@ -192,4 +192,4 @@ maintained at
 The canonical upstream repository remains
 [https://codeberg.org/semarie/sysclean/](https://codeberg.org/semarie/sysclean/).
 
-OpenBSD 7.8 - October 6, 2026 - SYSCLEAN(8)
+OpenBSD 7.9 - October 6, 2026 - SYSCLEAN(8)
