@@ -35,7 +35,9 @@ The apply path enforces the following invariants:
   refused.
 * **No traversal.**  Any path containing a `..` component is refused.
 * **Expected/ignored protection.**  A path present in the `expected` or
-  `ignored` sets is refused as a second line of defence.
+  `ignored` sets is refused as a second line of defence.  The tool's own
+  `/etc/sysclean.ignore` file is always added to `expected`, so apply mode
+  can never remove it, even when `-i` is not given.
 * **No symlink following.**  Removal uses `lstat(2)`; symbolic links are
   unlinked, never dereferenced.
 * **No recursion.**  Directories are removed with `rmdir(2)` only, so a
@@ -66,21 +68,30 @@ Read-only mode is unchanged: `unveil("/", "r")` (+ helper executables) and
 the final `pledge("rpath getpw")` both lock `unveil(2)` (a pledge without
 the `unveil` promise locks it).
 
-In apply mode the `unveil` promise is retained during the scan.  Just
-before applying, `prepare_apply()`:
+In apply mode the `unveil` promise is retained during the scan.  Because
+`pledge(2)` can only *reduce* the promise set, the promises needed to apply
+the changes (`wpath`/`cpath` to unlink files and `rmdir(2)` directories,
+`proc`/`exec` to run the account helpers) are requested from the first
+`pledge(2)` call in `init()`.  They stay harmless while scanning because
+`unveil(2)` still exposes a read-only view of the filesystem
+(`unveil("/", "r")`): `wpath`/`cpath` only permit the syscalls, they do not
+grant access to paths that are not unveiled.
+
+Just before applying, `prepare_apply()`:
 
 1. unveils each *parent directory* of a targeted path with `rwc`, so write
    access is limited to the directories that actually hold an obsolete
    element (more specific `unveil` rules override the read-only `/`);
-2. unveils `/usr/sbin/userdel` and `/usr/sbin/groupdel` with `rx` only when
-   accounts must be removed;
+2. unveils `/usr/sbin/userdel`, `/usr/sbin/groupdel` and
+   `/usr/sbin/usermod` with `rx` only when accounts must be removed or
+   modified;
 3. locks `unveil(2)` with `unveil()`; and
-4. reduces `pledge(2)` to `rpath wpath cpath getpw`, adding `proc exec`
-   only when helper programs are executed.
+4. reduces `pledge(2)` to `rpath wpath cpath getpw`, keeping `proc exec`
+   when helper programs must be executed.
 
-Because `pledge(2)` is called without `execpromises`, `execve(2)` drops the
-veil for the `userdel(8)` / `groupdel(8)` children, which then run their own
-sandbox.
+Because `pledge(2)` is called without `execpromises`, `execve(2)` drops both
+the pledge and the veil for the `userdel(8)` / `groupdel(8)` / `usermod(8)`
+children, which then run their own sandbox.
 
 ### Known limitations
 

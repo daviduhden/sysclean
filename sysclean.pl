@@ -29,12 +29,13 @@ use v5.36;
 package sysclean;
 
 # logging helpers (same convention as the other tools)
-sub logi { print "[INFO] $_[0]\n" }
-sub logw { print STDERR "[WARN] $_[0]\n" }
+sub logi { print "[INFO] @_\n" }
+sub logw { print STDERR "[WARN] @_\n" }
 
 sub die_tool {
-    print STDERR "[ERROR] $_[0]\n";
-    exit 1;
+    my ( $exitcode, @msg ) = @_;
+    print STDERR "[ERROR] @msg\n";
+    exit $exitcode;
 }
 
 # return subclass according to options
@@ -89,10 +90,15 @@ sub new( $class, $with_ignored, $apply ) {
 
     $self->init_ignored;
     $self->init;
+
+    # /etc/sysclean.ignore is this tool's own configuration file.  Always
+    # treat it as expected so that it is never reported as obsolete and never
+    # removed in apply mode, even when -i is not given.
+    $self->{expected}{'/etc/sysclean.ignore'} = 1;
+
     if ($with_ignored) {
         $self->add_user_ignored("/etc/changelist");
         $self->add_user_ignored("/etc/sysclean.ignore");
-        $self->{expected}{'/etc/sysclean.ignore'} = 1;
     }
 
     return $self;
@@ -106,7 +112,7 @@ sub usage($self) {
 
 # print error and exit
 sub err( $self, $exitcode, @rest ) {
-    die_tool("@rest");
+    die_tool( $exitcode, @rest );
 }
 
 # print warning
@@ -159,10 +165,18 @@ sub init($self) {
     use OpenBSD::Pledge;
     use OpenBSD::Unveil;
 
-    # in apply mode keep the unveil promise around so that write
-    # permissions can be granted to the directories holding the
-    # elements to remove once they are known
+    # pledge(2) can only *reduce* the promise set: a promise dropped now can
+    # never be reclaimed later.  In apply mode the write promises (to unlink
+    # files and rmdir empty directories) and the process/exec promises (to run
+    # userdel(8), groupdel(8) and usermod(8)) are therefore requested from the
+    # very first call.  They stay harmless during the scan because unveil(2)
+    # still exposes a read-only view of the filesystem; only prepare_apply()
+    # opens write access to the directories holding the elements to remove.
     my $unveil = $self->{apply} ? ' unveil' : '';
+    my $scan_promises =
+      $self->{apply}
+      ? "rpath getpw wpath cpath proc exec$unveil"
+      : "rpath getpw proc exec$unveil";
 
     lock_db(1);
 
@@ -171,12 +185,16 @@ sub init($self) {
     unveil( '/usr/bin/locate', 'rx' );
     unveil( '/usr/sbin/rcctl', 'rx' );
 
-    pledge("rpath getpw proc exec$unveil") || $self->err( 1, "pledge" );
+    pledge($scan_promises) || $self->err( 1, "pledge" );
     $self->add_expected_base;
     $self->add_expected_dev;
     $self->add_expected_rcctl;
 
-    pledge("rpath getpw$unveil") || $self->err( 1, "pledge" );
+    # once the helper programs have run, drop proc/exec in read-only mode;
+    # apply mode keeps them because the account helpers are executed later.
+    pledge("rpath getpw$unveil") || $self->err( 1, "pledge" )
+      unless $self->{apply};
+
     $self->add_expected_users;
     $self->add_expected_ports_info;
 }
@@ -314,6 +332,10 @@ sub add_expected_dev($self) {
         }
     }
     close($dev);
+
+    # restore the working directory, changed to /dev for MAKEDEV(8)
+    chdir('/')
+      || $self->warn("can't chdir back to /: $!");
 }
 
 # add expected files from enabled daemons and services.
@@ -477,7 +499,13 @@ m/^\@(?:cwd|name|info|fontdir|man|mandir|file|lib|shell|so|static-lib|extra|samp
 
 # add user-defined `ignored' elements
 sub add_user_ignored( $self, $conffile ) {
+
+    # guard against "@include" loops: a configuration file is processed only
+    # once, further includes of the same file are silently ignored.
+    return 1 if $self->{ignore_loaded}{$conffile};
+
     open( my $fh, "<", $conffile ) || return 0;
+    $self->{ignore_loaded}{$conffile} = 1;
     while (<$fh>) {
         chomp;
 
@@ -601,11 +629,11 @@ sub walk_users($self) {
                 push @changed, "group is $gname, should be $uf->{group}"
                   if ( defined $uf->{group} and $gname ne $uf->{group} );
                 push @changed, "class is '$class', should be '$uf->{class}'"
-                  if ( $class ne $uf->{class} );
+                  if ( defined $uf->{class} && $class ne $uf->{class} );
                 push @changed, "homedir is $home, should be $uf->{home}"
-                  if ( $home ne $uf->{home} );
+                  if ( defined $uf->{home} && $home ne $uf->{home} );
                 push @changed, "shell is $shell, should be $uf->{shell}"
-                  if ( $shell ne $uf->{shell} );
+                  if ( defined $uf->{shell} && $shell ne $uf->{shell} );
 
                 if ( $self->{apply} ) {
 
@@ -1013,7 +1041,7 @@ sub find_sub( $self, $filename ) {
     if ( $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|o ) {
         my $wantlib = "$1$2";
 
-        for my $pkgname ( @{ $self->{used_libs}{$wantlib} } ) {
+        for my $pkgname ( @{ $self->{used_libs}{$wantlib} // [] } ) {
             print( $filename, "\t", $pkgname, "\n" );
         }
     }
