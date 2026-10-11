@@ -63,11 +63,12 @@ sub create( $base, $options ) {
     #   -x     -> ignored files are removed like any other obsolete element
     my $with_ignored = $apply ? defined $$options{i} : !defined $$options{i};
 
-    sysclean->warn(
+    sysclean->warning(
         "-x: ignored files are not protected, use -i to respect them")
       if ( $apply && !defined $$options{i} );
 
-    sysclean->warn("-x with -a may remove libraries used by installed packages")
+    sysclean->warning(
+        "-x with -a may remove libraries used by installed packages")
       if ( $apply && defined $$options{a} );
 
     return $base->subclass($options)->new( $with_ignored, $apply );
@@ -116,7 +117,7 @@ sub err( $self, $exitcode, @rest ) {
 }
 
 # print warning
-sub warn( $self, @rest ) {
+sub warning( $self, @rest ) {
     logw("@rest");
 }
 
@@ -155,7 +156,7 @@ sub init_ignored($self) {
     };
 
     # additionnal ignored files, using pattern
-    foreach my $filename (</bsd.syspatch*>) {
+    foreach my $filename ( glob('/bsd.syspatch*') ) {
         $self->{ignored}{$filename} = 1;
     }
 }
@@ -245,7 +246,7 @@ sub add_expected_base($self) {
     };
 
     # additionnal expected files, using pattern
-    foreach my $filename (</etc/hostname.*>) {
+    foreach my $filename ( glob('/etc/hostname.*') ) {
         $self->{expected}{$filename} = 1;
     }
 
@@ -257,7 +258,7 @@ sub add_expected_base($self) {
       || $self->err( 1, "can't read base locatedb" );
     while (<$cmd>) {
         chomp;
-        my ( $set, $filename ) = split( ':', $_, 2 );
+        my ( undef, $filename ) = split( ':', $_, 2 );
         $self->add_expected_base_one($filename);
     }
     close($cmd);
@@ -272,7 +273,7 @@ sub add_expected_base_one( $self, $filename ) {
 sub add_expected_dev($self) {
 
     # set 'eo=echo' in env, to run MAKEDEV(8) in echo mode.
-    $ENV{'eo'} = 'echo';
+    local $ENV{eo} = 'echo';
 
     chdir('/dev')
       || $self->err( 1, "can't chdir to /dev" );
@@ -283,7 +284,7 @@ sub add_expected_dev($self) {
         chomp;
 
         # simplify command separator
-        s/\s*(;|&&|\|\|)\s*/;/g;
+        s/\s*(?:;|&&|\|\|)\s*/;/g;
 
         # iterate on commands
         foreach my $commandline ( split(/;/) ) {
@@ -335,7 +336,7 @@ sub add_expected_dev($self) {
 
     # restore the working directory, changed to /dev for MAKEDEV(8)
     chdir('/')
-      || $self->warn("can't chdir back to /: $!");
+      || $self->warning("can't chdir back to /: $!");
 }
 
 # add expected files from enabled daemons and services.
@@ -438,15 +439,15 @@ sub add_expected_users($self) {
     my $group  = $tar->get_content('./etc/group');
     foreach my $entry ( split( /\n/, $group ) ) {
         my ( $name, $passwd, $gid, $members ) = split( /:/, $entry );
-        my $group = join( ':', ( $name, $gid ) );
+        my $group_key = join( ':', ( $name, $gid ) );
 
         $groups{$gid} = $name;
-        $self->{groups}{$group} = 1;
+        $self->{groups}{$group_key} = 1;
     }
 
     # add users
-    my $passwd = $tar->get_content('./etc/master.passwd');
-    foreach my $entry ( split( /\n/, $passwd ) ) {
+    my $passwd_content = $tar->get_content('./etc/master.passwd');
+    foreach my $entry ( split( /\n/, $passwd_content ) ) {
         my (
             $name,   $passwd, $uid,   $gid,  $class,
             $change, $expire, $gecos, $home, $shell
@@ -489,9 +490,9 @@ sub plist_reader($self) {
     return sub ( $fh, $cont ) {
         while (<$fh>) {
             next
-              unless
+              if !
 m/^\@(?:cwd|name|info|fontdir|man|mandir|file|lib|shell|so|static-lib|extra|sample|bin|rcscript|wantlib|newuser|newgroup)\b/o
-              || !m/^\@/o;
+              && m/^\@/o;
             &$cont($_);
         }
     }
@@ -520,7 +521,7 @@ sub add_user_ignored( $self, $conffile ) {
 
             # include another conffile
             $self->add_user_ignored($1)
-              || $self->warn("open \"$1\": $!");
+              || $self->warning("open \"$1\": $!");
 
         }
         elsif (m|^/|) {
@@ -754,7 +755,9 @@ sub path_depth($path) {
 }
 
 sub sort_paths_deepest_first( $self, $paths ) {
-    return sort { path_depth($b) <=> path_depth($a) || $a cmp $b } @$paths;
+    my @sorted =
+      sort { path_depth($b) <=> path_depth($a) || $a cmp $b } @$paths;
+    return @sorted;
 }
 
 # return a reason when $path must not be removed, undef otherwise
@@ -766,13 +769,13 @@ sub check_removable_path( $self, $path ) {
       if ( $path =~ m{(?:^|/)\.\.(?:/|$)} );
     return "pathname is expected" if ( exists $self->{expected}{$path} );
     return "pathname is ignored"  if ( exists $self->{ignored}{$path} );
-    return undef;
+    return;
 }
 
 # remove a single obsolete file, or an empty directory
 sub remove_path( $self, $path ) {
     if ( my $reason = $self->check_removable_path($path) ) {
-        $self->warn("not removing '$path': $reason");
+        $self->warning("not removing '$path': $reason");
         $self->{removed}{failed}++;
         return 0;
     }
@@ -780,7 +783,7 @@ sub remove_path( $self, $path ) {
     # use lstat(2) so that symbolic links are removed, not followed
     my @st = lstat($path);
     if ( !@st ) {
-        $self->warn("lstat '$path': $!");
+        $self->warning("lstat '$path': $!");
         $self->{removed}{failed}++;
         return 0;
     }
@@ -793,7 +796,7 @@ sub remove_path( $self, $path ) {
             $self->{removed}{dirs}++;
             return 1;
         }
-        $self->warn("rmdir '$path': $!");
+        $self->warning("rmdir '$path': $!");
         $self->{removed}{failed}++;
         return 0;
     }
@@ -803,7 +806,7 @@ sub remove_path( $self, $path ) {
         $self->{removed}{files}++;
         return 1;
     }
-    $self->warn("unlink '$path': $!");
+    $self->warning("unlink '$path': $!");
     $self->{removed}{failed}++;
     return 0;
 }
@@ -818,12 +821,12 @@ sub valid_account_name($name) {
 # remove an obsolete user with userdel(8); the home directory is preserved
 sub remove_user( $self, $name ) {
     if ( !valid_account_name($name) ) {
-        $self->warn("not removing user '$name': invalid name");
+        $self->warning("not removing user '$name': invalid name");
         $self->{removed}{failed}++;
         return 0;
     }
     if ( !-x '/usr/sbin/userdel' ) {
-        $self->warn("not removing user '$name': /usr/sbin/userdel missing");
+        $self->warning("not removing user '$name': /usr/sbin/userdel missing");
         $self->{removed}{failed}++;
         return 0;
     }
@@ -833,7 +836,7 @@ sub remove_user( $self, $name ) {
         $self->{removed}{users}++;
         return 1;
     }
-    $self->warn("userdel '$name' failed");
+    $self->warning("userdel '$name' failed");
     $self->{removed}{failed}++;
     return 0;
 }
@@ -841,12 +844,13 @@ sub remove_user( $self, $name ) {
 # remove an obsolete group with groupdel(8)
 sub remove_group( $self, $name ) {
     if ( !valid_account_name($name) ) {
-        $self->warn("not removing group '$name': invalid name");
+        $self->warning("not removing group '$name': invalid name");
         $self->{removed}{failed}++;
         return 0;
     }
     if ( !-x '/usr/sbin/groupdel' ) {
-        $self->warn("not removing group '$name': /usr/sbin/groupdel missing");
+        $self->warning(
+            "not removing group '$name': /usr/sbin/groupdel missing");
         $self->{removed}{failed}++;
         return 0;
     }
@@ -856,7 +860,7 @@ sub remove_group( $self, $name ) {
         $self->{removed}{groups}++;
         return 1;
     }
-    $self->warn("groupdel '$name' failed");
+    $self->warning("groupdel '$name' failed");
     $self->{removed}{failed}++;
     return 0;
 }
@@ -864,12 +868,12 @@ sub remove_group( $self, $name ) {
 # apply the recommended changes to a modified system user with usermod(8)
 sub modify_user( $self, $name, $opts ) {
     if ( !valid_account_name($name) ) {
-        $self->warn("not modifying user '$name': invalid name");
+        $self->warning("not modifying user '$name': invalid name");
         $self->{removed}{failed}++;
         return 0;
     }
     if ( !-x '/usr/sbin/usermod' ) {
-        $self->warn("not modifying user '$name': /usr/sbin/usermod missing");
+        $self->warning("not modifying user '$name': /usr/sbin/usermod missing");
         $self->{removed}{failed}++;
         return 0;
     }
@@ -879,7 +883,7 @@ sub modify_user( $self, $name, $opts ) {
         $self->{removed}{modified}++;
         return 1;
     }
-    $self->warn("usermod '$name' failed");
+    $self->warning("usermod '$name' failed");
     $self->{removed}{failed}++;
     return 0;
 }
@@ -895,7 +899,7 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
     }
     for my $dir ( keys %dirs ) {
         unveil( $dir, 'rwc' )
-          || $self->warn("unveil '$dir': $!");
+          || $self->warning("unveil '$dir': $!");
     }
 
     my $promises = 'rpath wpath cpath getpw';
@@ -904,16 +908,16 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
 
         # userdel(8), groupdel(8) and usermod(8) run as child processes
         unveil( '/usr/sbin/userdel', 'rx' )
-          || $self->warn("unveil '/usr/sbin/userdel': $!");
+          || $self->warning("unveil '/usr/sbin/userdel': $!");
         unveil( '/usr/sbin/groupdel', 'rx' )
-          || $self->warn("unveil '/usr/sbin/groupdel': $!");
+          || $self->warning("unveil '/usr/sbin/groupdel': $!");
         unveil( '/usr/sbin/usermod', 'rx' )
-          || $self->warn("unveil '/usr/sbin/usermod': $!");
+          || $self->warning("unveil '/usr/sbin/usermod': $!");
         $promises .= ' proc exec';
     }
 
     # no further unveil(2) calls are allowed after this point
-    unveil()          || $self->warn("unveil lock: $!");
+    unveil()          || $self->warning("unveil lock: $!");
     pledge($promises) || $self->err( 1, "pledge" );
 }
 
@@ -1006,7 +1010,7 @@ sub find_sub( $self, $filename ) {
             my $currentlib  = OpenBSD::Library->from_string($filename);
 
             if ( $currentlib->is_better($expectedlib) ) {
-                $self->warn("discard better version: $filename");
+                $self->warning("discard better version: $filename");
                 return;
             }
         }
