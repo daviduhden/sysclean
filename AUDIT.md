@@ -64,34 +64,21 @@ The apply path enforces the following invariants:
 
 ## Sandbox (`pledge(2)` / `unveil(2)`)
 
-Read-only mode is unchanged: `unveil("/", "r")` (+ helper executables) and
+Read-only mode retains: `unveil("/", "r")` (+ helper executables) and
 the final `pledge("rpath getpw")` both lock `unveil(2)` (a pledge without
 the `unveil` promise locks it).
 
-In apply mode the `unveil` promise is retained during the scan.  Because
-`pledge(2)` can only *reduce* the promise set, the promises needed to apply
-the changes (`wpath`/`cpath` to unlink files and `rmdir(2)` directories,
-`proc`/`exec` to run the account helpers) are requested from the first
-`pledge(2)` call in `init()`.  They stay harmless while scanning because
-`unveil(2)` still exposes a read-only view of the filesystem
-(`unveil("/", "r")`): `wpath`/`cpath` only permit the syscalls, they do not
-grant access to paths that are not unveiled.
+The scan invokes helper programs before installing a syscall ceiling.
+Read-only mode pledges `rpath getpw` after those helpers finish. Apply mode
+stays unpledged during scanning because account helpers may execute later.
+Its read-only unveil view is retained until prepare_apply() opens the parent
+directories of selected paths for rwc operations and locks the view.
 
-Just before applying, `prepare_apply()`:
-
-1. unveils each *parent directory* of a targeted path with `rwc`, so write
-   access is limited to the directories that actually hold an obsolete
-   element (more specific `unveil` rules override the read-only `/`);
-2. unveils `/usr/sbin/userdel`, `/usr/sbin/groupdel` and
-   `/usr/sbin/usermod` with `rx` only when accounts must be removed or
-   modified;
-3. locks `unveil(2)` with `unveil()`; and
-4. reduces `pledge(2)` to `rpath wpath cpath getpw`, keeping `proc exec`
-   when helper programs must be executed.
-
-Because `pledge(2)` is called without `execpromises`, `execve(2)` drops both
-the pledge and the veil for the `userdel(8)` / `groupdel(8)` / `usermod(8)`
-children, which then run their own sandbox.
+When no account helpers are needed, prepare_apply() pledges
+`rpath wpath cpath getpw`. Otherwise it stays unpledged; there is no compatible
+syscall ceiling without the execution promise. Execve clears the unveil view
+in account helpers because no execpromises were installed, allowing those
+utilities to set their own sandbox. Parent pathname restrictions remain.
 
 ### Known limitations
 

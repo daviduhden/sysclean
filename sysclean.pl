@@ -166,19 +166,8 @@ sub init($self) {
     use OpenBSD::Pledge;
     use OpenBSD::Unveil;
 
-    # pledge(2) can only *reduce* the promise set: a promise dropped now can
-    # never be reclaimed later.  In apply mode the write promises (to unlink
-    # files and rmdir empty directories) and the process/exec promises (to run
-    # userdel(8), groupdel(8) and usermod(8)) are therefore requested from the
-    # very first call.  They stay harmless during the scan because unveil(2)
-    # still exposes a read-only view of the filesystem; only prepare_apply()
-    # opens write access to the directories holding the elements to remove.
-    my $unveil = $self->{apply} ? ' unveil' : '';
-    my $scan_promises =
-      $self->{apply}
-      ? "rpath getpw wpath cpath proc exec$unveil"
-      : "rpath getpw proc exec$unveil";
-
+    # The scan invokes helpers before a syscall ceiling can be installed.
+    # Apply mode may also invoke account helpers later; keep it unpledged.
     lock_db(1);
 
     unveil( '/',               'r' );
@@ -186,14 +175,12 @@ sub init($self) {
     unveil( '/usr/bin/locate', 'rx' );
     unveil( '/usr/sbin/rcctl', 'rx' );
 
-    pledge($scan_promises) || $self->err( 1, "pledge" );
     $self->add_expected_base;
     $self->add_expected_dev;
     $self->add_expected_rcctl;
 
-    # once the helper programs have run, drop proc/exec in read-only mode;
-    # apply mode keeps them because the account helpers are executed later.
-    pledge("rpath getpw$unveil") || $self->err( 1, "pledge" )
+    # Read-only mode has finished all external execution.
+    pledge("rpath getpw") || $self->err( 1, "pledge" )
       unless $self->{apply};
 
     $self->add_expected_users;
@@ -913,12 +900,13 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
           || $self->warning("unveil '/usr/sbin/groupdel': $!");
         unveil( '/usr/sbin/usermod', 'rx' )
           || $self->warning("unveil '/usr/sbin/usermod': $!");
-        $promises .= ' proc exec';
     }
 
     # no further unveil(2) calls are allowed after this point
     unveil()          || $self->warning("unveil lock: $!");
-    pledge($promises) || $self->err( 1, "pledge" );
+    pledge($promises) || $self->err( 1, "pledge" )
+      unless scalar(@$users) + scalar(@$groups) + scalar(@$user_mods) > 0;
+    return 1;
 }
 
 sub apply($self) {
