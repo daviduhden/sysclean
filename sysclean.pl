@@ -903,7 +903,7 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
     }
 
     # no further unveil(2) calls are allowed after this point
-    unveil()          || $self->warning("unveil lock: $!");
+    unveil() || $self->warning("unveil lock: $!");
     pledge($promises) || $self->err( 1, "pledge" )
       unless scalar(@$users) + scalar(@$groups) + scalar(@$user_mods) > 0;
     return 1;
