@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd October 6, 2026
+.Dd October 24, 2026
 .Dt SYSCLEAN 8
 .Os
 .Sh NAME
@@ -60,9 +60,19 @@ All files mode.
 will not exclude filenames used by installed packages from output.
 .It Fl i
 With ignored.
+In the default read-only mode,
 .Nm
 will include filenames that are ignored by default, using
 .Pa /etc/sysclean.ignore .
+When combined with
+.Fl x ,
+the meaning is inverted:
+elements listed in
+.Pa /etc/changelist
+and
+.Pa /etc/sysclean.ignore
+are respected and are not removed.
+Hard-coded ignores remain active in both cases.
 .It Fl p
 Package mode.
 .Nm
@@ -82,12 +92,19 @@ their home directories are preserved.
 System users whose group, login class, home directory or shell differs
 from the reference installation are updated with
 .Xr usermod 8 .
+An account whose name matches the reference installation but whose
+uid or gid differs is reported but is not removed or modified.
 .Pp
 The
 .Fl x
 option is not compatible with the
 .Fl p
 option.
+It may be combined with
+.Fl a ;
+libraries used by installed packages are listed in read-only mode and are
+protected from removal in apply mode when they are recorded in the package
+metadata.
 When
 .Fl i
 is used, elements ignored through
@@ -98,6 +115,9 @@ are respected and never removed;
 without
 .Fl i ,
 they are removed like any other obsolete element.
+The hard-coded ignore list in the program is always respected,
+regardless of
+.Fl i .
 .El
 .Sh ENVIRONMENT
 .Bl -tag -width "PKG_DBDIR"
@@ -119,6 +139,11 @@ or
 .Sq @group
 will be interpreted as user or group to ignore.
 .Pp
+A line of the form
+.Sq @include
+followed by a quoted file name loads another ignore file.
+A missing included file is an error.
+.Pp
 Shell globbing is supported in pathnames; see
 .Xr File::Glob 3p .
 If the pattern matches a directory,
@@ -131,7 +156,7 @@ file format, the character
 is skipped at the beginning of a line.
 .Pp
 .Pa /etc/changelist
-is implictly included.
+is implicitly included.
 .El
 .Sh EXAMPLES
 Obtain a list of outdated files (without libraries used by packages):
@@ -194,7 +219,13 @@ without
 .Fl x .
 .Pp
 .Nm
-never removes a non-empty directory and never follows symbolic links.
+never removes a non-empty directory and never follows a symbolic link in
+the final pathname component.
+A pathname with a symbolic link in an ancestor component is not removed.
+.Pp
+In apply mode,
+.Nm
+exits with status 1 if any requested removal or account update fails.
 .Sh FORK
 This manual page is part of a fork of
 .Nm

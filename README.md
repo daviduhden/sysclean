@@ -49,9 +49,19 @@ The options are as follows:
 **-i**
 
 > With ignored.
+> In the default read-only mode,
 > **sysclean**
 > will include filenames that are ignored by default, using
 > */etc/sysclean.ignore*.
+> When combined with
+> **-x**,
+> the meaning is inverted:
+> elements listed in
+> */etc/changelist*
+> and
+> */etc/sysclean.ignore*
+> are respected and are not removed.
+> Hard-coded ignores remain active in both cases.
 
 **-p**
 
@@ -75,12 +85,19 @@ The options are as follows:
 > System users whose group, login class, home directory or shell differs
 > from the reference installation are updated with
 > usermod(8).
+> An account whose name matches the reference installation but whose
+> uid or gid differs is reported but is not removed or modified.
 
 > The
 > **-x**
 > option is not compatible with the
 > **-p**
 > option.
+> It may be combined with
+> **-a**;
+> libraries used by installed packages are listed in read-only mode and are
+> protected from removal in apply mode when they are recorded in the package
+> metadata.
 > When
 > **-i**
 > is used, elements ignored through
@@ -91,6 +108,9 @@ The options are as follows:
 > without
 > **-i**,
 > they are removed like any other obsolete element.
+> The hard-coded ignore list in the program is always respected,
+> regardless of
+> **-i**.
 
 # ENVIRONMENT
 
@@ -114,6 +134,11 @@ The options are as follows:
 > '@group'
 > will be interpreted as user or group to ignore.
 
+> A line of the form
+> '@include'
+> followed by a quoted file name loads another ignore file.
+> A missing included file is an error.
+
 > Shell globbing is supported in pathnames; see
 > File::Glob(3p).
 > If the pattern matches a directory,
@@ -126,7 +151,7 @@ The options are as follows:
 > is skipped at the beginning of a line.
 
 > */etc/changelist*
-> is implictly included.
+> is implicitly included.
 
 # EXAMPLES
 
@@ -192,7 +217,13 @@ without
 **-x**.
 
 **sysclean**
-never removes a non-empty directory and never follows symbolic links.
+never removes a non-empty directory and never follows a symbolic link in
+the final pathname component.
+A pathname with a symbolic link in an ancestor component is not removed.
+
+In apply mode,
+**sysclean**
+exits with status 1 if any requested removal or account update fails.
 
 # FORK
 
@@ -203,4 +234,4 @@ maintained at
 The canonical upstream repository remains
 [https://codeberg.org/semarie/sysclean/](https://codeberg.org/semarie/sysclean/).
 
-OpenBSD 7.9 - October 6, 2026 - SYSCLEAN(8)
+OpenBSD 7.9 - October 24, 2026 - SYSCLEAN(8)

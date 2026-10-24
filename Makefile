@@ -26,6 +26,7 @@ README.md: sysclean.8
 	>$@
 
 regress: run-regress-perl-syntax \
+	run-regress-apply-unit \
 	run-regress-man-lint \
 	run-regress-man-readme \
 	run-regress-man-date
@@ -34,6 +35,12 @@ regress: run-regress-perl-syntax \
 run-regress-perl-syntax:
 	@echo TEST: perl syntax
 	@perl -c sysclean.pl
+
+# check the apply-mode helpers; these tests use File::Temp only and never
+# touch system files or accounts
+run-regress-apply-unit:
+	@echo TEST: apply mode helpers
+	@perl regress/apply.t
 
 # check man page
 run-regress-man-lint:
@@ -76,8 +83,10 @@ release:
 release: sysclean-${VERSION}.tar.gz
 
 DISTRIBUTED_FILES = \
+	AUDIT.md \
 	Makefile \
 	README.md \
+	regress \
 	sysclean.ignore \
 	${MAN} \
 	${SCRIPT}
