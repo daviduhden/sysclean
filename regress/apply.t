@@ -1,7 +1,5 @@
 #!/usr/bin/perl
 #
-# $OpenBSD$
-#
 # Unit tests for the apply (-x) mode helpers.
 #
 # These tests only touch directories created by File::Temp.  They never run
