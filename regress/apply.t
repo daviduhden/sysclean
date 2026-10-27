@@ -18,6 +18,7 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 
 # loading the script must not execute the main program
+## no critic (Modules::RequireBarewordIncludes) -- FindBin keeps this isolated test independent of the caller's working directory.
 require "$FindBin::Bin/../sysclean.pl";
 
 pass('sysclean.pl loaded without running the main program');
@@ -26,19 +27,19 @@ sub new_sysclean {
     my (%args) = @_;
 
     return bless {
-        apply              => $args{apply} // 1,
-        expected           => $args{expected} // {},
-        ignored            => $args{ignored} // {},
-        users              => $args{users} // {},
-        groups             => $args{groups} // {},
-        user_fields        => $args{user_fields} // {},
-        group_fields       => $args{group_fields} // {},
-        ignored_users      => {},
-        ignored_user_names => {},
-        ignored_groups     => {},
+        apply               => $args{apply}        // 1,
+        expected            => $args{expected}     // {},
+        ignored             => $args{ignored}      // {},
+        users               => $args{users}        // {},
+        groups              => $args{groups}       // {},
+        user_fields         => $args{user_fields}  // {},
+        group_fields        => $args{group_fields} // {},
+        ignored_users       => {},
+        ignored_user_names  => {},
+        ignored_groups      => {},
         ignored_group_names => {},
-        actions            => [],
-        removed            => {
+        actions             => [],
+        removed             => {
             files    => 0,
             dirs     => 0,
             users    => 0,
@@ -46,7 +47,8 @@ sub new_sysclean {
             modified => 0,
             failed   => 0,
         },
-    }, 'sysclean';
+      },
+      'sysclean';
 }
 
 sub capture_both($code) {
@@ -69,35 +71,54 @@ subtest 'path validation' => sub {
         ignored  => { '/var/ignored'  => 1 },
     );
 
-    is( $sc->check_removable_path('/var/obsolete'), undef,
-        'canonical absolute path is removable' );
-    like( $sc->check_removable_path('relative'), qr/not an absolute/,
-        'relative path is refused' );
-    like( $sc->check_removable_path(''), qr/empty/,
-        'empty path is refused' );
-    like( $sc->check_removable_path('/'), qr/refusing to remove/,
-        'the root directory is refused' );
-    like( $sc->check_removable_path('/var/../etc/obsolete'), qr/\.\./,
-        "'..' component is refused" );
-    like( $sc->check_removable_path('/var//obsolete'), qr/not canonical/,
-        'double slash is refused' );
-    like( $sc->check_removable_path('/var/./obsolete'), qr/not canonical/,
-        "'.' component is refused" );
-    like( $sc->check_removable_path('/var/obsolete/'), qr/not canonical/,
-        'trailing slash is refused' );
-    like( $sc->check_removable_path("/var/obsolete\n"), qr/control character/,
-        'control character is refused' );
-    like( $sc->check_removable_path('/var/expected'), qr/expected/,
-        'expected path is refused' );
-    like( $sc->check_removable_path('/var/ignored'), qr/ignored/,
-        'ignored path is refused' );
-    like( $sc->check_removable_path('/var/ignored/file'),
+    is( $sc->check_removable_path('/var/obsolete'),
+        undef, 'canonical absolute path is removable' );
+    like(
+        $sc->check_removable_path('relative'),
+        qr/not an absolute/,
+        'relative path is refused'
+    );
+    like( $sc->check_removable_path(''), qr/empty/, 'empty path is refused' );
+    like(
+        $sc->check_removable_path('/'),
+        qr/refusing to remove/,
+        'the root directory is refused'
+    );
+    like( $sc->check_removable_path('/var/../etc/obsolete'),
+        qr/\.\./, "'..' component is refused" );
+    like(
+        $sc->check_removable_path('/var//obsolete'),
+        qr/not canonical/,
+        'double slash is refused'
+    );
+    like(
+        $sc->check_removable_path('/var/./obsolete'),
+        qr/not canonical/,
+        "'.' component is refused"
+    );
+    like(
+        $sc->check_removable_path('/var/obsolete/'),
+        qr/not canonical/,
+        'trailing slash is refused'
+    );
+    like(
+        $sc->check_removable_path("/var/obsolete\n"),
+        qr/control character/,
+        'control character is refused'
+    );
+    like( $sc->check_removable_path('/var/expected'),
+        qr/expected/, 'expected path is refused' );
+    like( $sc->check_removable_path('/var/ignored'),
+        qr/ignored/, 'ignored path is refused' );
+    like(
+        $sc->check_removable_path('/var/ignored/file'),
         qr/inside an ignored directory/,
-        'path inside an ignored directory is refused' );
+        'path inside an ignored directory is refused'
+    );
 };
 
 subtest 'symlinked ancestor' => sub {
-    my $dir  = tempdir(CLEANUP => 1);
+    my $dir  = tempdir( CLEANUP => 1 );
     my $real = "$dir/real";
     my $link = "$dir/link";
     my $sc   = new_sysclean();
@@ -105,55 +126,63 @@ subtest 'symlinked ancestor' => sub {
     plan skip_all => 'temporary directory has a symlinked ancestor'
       if $sc->path_has_symlink_ancestor("$dir/obsolete");
 
-    mkdir($real) or die "mkdir $real: $!";
+    mkdir($real)            or die "mkdir $real: $!";
     symlink( $real, $link ) or die "symlink $link: $!";
 
-    like( $sc->check_removable_path("$link/obsolete"),
+    like(
+        $sc->check_removable_path("$link/obsolete"),
         qr/symbolic link component/,
-        'path with a symlinked ancestor is refused' );
+        'path with a symlinked ancestor is refused'
+    );
 };
 
 subtest 'sort_paths_deepest_first' => sub {
     my $sc = new_sysclean();
-    my @sorted = $sc->sort_paths_deepest_first(
-        [ '/a', '/a/b', '/a/b/c', '/x' ] );
+    my @sorted =
+      $sc->sort_paths_deepest_first( [ '/a', '/a/b', '/a/b/c', '/x' ] );
 
-    is_deeply( \@sorted, [ '/a/b/c', '/a/b', '/a', '/x' ],
-        'paths are sorted deepest-first' );
+    is_deeply(
+        \@sorted,
+        [ '/a/b/c', '/a/b', '/a', '/x' ],
+        'paths are sorted deepest-first'
+    );
 };
 
 subtest 'account and usermod argument validation' => sub {
-    ok( sysclean::valid_account_name('_foo'), '_foo is valid' );
+    ok( sysclean::valid_account_name('_foo'),      '_foo is valid' );
     ok( sysclean::valid_account_name('foo.bar-1'), 'foo.bar-1 is valid' );
-    ok( !sysclean::valid_account_name('a b'), 'space is invalid' );
-    ok( !sysclean::valid_account_name('-x'), 'leading dash is invalid' );
-    ok( !sysclean::valid_account_name(''), 'empty name is invalid' );
-    ok( !sysclean::valid_account_name(undef), 'undef name is invalid' );
+    ok( !sysclean::valid_account_name('a b'),      'space is invalid' );
+    ok( !sysclean::valid_account_name('-x'),       'leading dash is invalid' );
+    ok( !sysclean::valid_account_name(''),         'empty name is invalid' );
+    ok( !sysclean::valid_account_name(undef),      'undef name is invalid' );
     ok( !sysclean::valid_account_name("foo\n"), 'trailing newline is invalid' );
 
     ok( sysclean::valid_usermod_args( '-g', '_foo', '-s', '/sbin/nologin' ),
         'valid usermod options are accepted' );
-    ok( sysclean::valid_usermod_args( '-L', '' ),
-        'empty login class is accepted' );
+    ok(
+        sysclean::valid_usermod_args( '-L', '' ),
+        'empty login class is accepted'
+    );
     ok( !sysclean::valid_usermod_args('-g'), 'dangling option is refused' );
     ok( !sysclean::valid_usermod_args( '-g', '-x' ),
         'option injection is refused' );
     ok( !sysclean::valid_usermod_args( '-x', 'foo' ),
         'unknown option is refused' );
-    ok( !sysclean::valid_usermod_args( '-d', '' ),
-        'empty home directory is refused' );
+    ok(
+        !sysclean::valid_usermod_args( '-d', '' ),
+        'empty home directory is refused'
+    );
 };
 
 subtest 'log sanitization' => sub {
-    is( sysclean::sanitize_log("a\nb"), 'a\x0ab',
-        'newline is escaped in log messages' );
-    is( sysclean::sanitize_log('plain'), 'plain',
-        'plain text is unchanged' );
+    is( sysclean::sanitize_log("a\nb"),
+        'a\x0ab', 'newline is escaped in log messages' );
+    is( sysclean::sanitize_log('plain'), 'plain', 'plain text is unchanged' );
 };
 
 subtest 'remove_path' => sub {
     my $sc  = new_sysclean();
-    my $dir = tempdir(CLEANUP => 1);
+    my $dir = tempdir( CLEANUP => 1 );
 
     plan skip_all => 'temporary directory has a symlinked ancestor'
       if $sc->path_has_symlink_ancestor("$dir/obsolete");
@@ -179,8 +208,8 @@ subtest 'remove_path' => sub {
 
     my $link_ok;
     capture_both( sub { $link_ok = $sc->remove_path($link) } );
-    ok( $link_ok, 'symlink removed' );
-    ok( !-l $link, 'symlink is gone' );
+    ok( $link_ok,   'symlink removed' );
+    ok( !-l $link,  'symlink is gone' );
     ok( -f $target, 'symlink target is preserved' );
 
     # empty directory is removed
@@ -188,7 +217,7 @@ subtest 'remove_path' => sub {
     mkdir($empty) or die "mkdir $empty: $!";
     my $empty_ok;
     capture_both( sub { $empty_ok = $sc->remove_path($empty) } );
-    ok( $empty_ok, 'empty directory removed' );
+    ok( $empty_ok,  'empty directory removed' );
     ok( !-e $empty, 'empty directory is gone' );
     is( $sc->{removed}{dirs}, 1, 'directory removal counted' );
 
@@ -204,8 +233,8 @@ subtest 'remove_path' => sub {
 };
 
 subtest 'expected and ignored paths are preserved' => sub {
-    my $dir  = tempdir(CLEANUP => 1);
-    my $keep = "$dir/keep";
+    my $dir   = tempdir( CLEANUP => 1 );
+    my $keep  = "$dir/keep";
     my $probe = new_sysclean();
 
     plan skip_all => 'temporary directory has a symlinked ancestor'
@@ -225,15 +254,16 @@ subtest 'allfiles apply protects used libraries' => sub {
         apply     => 1,
         used_libs => { 'c.so.1.2' => ['some-package'] },
         actions   => [],
-    }, 'sysclean::allfiles';
+      },
+      'sysclean::allfiles';
 
     capture_both( sub { $sc->find_sub('/usr/lib/libc.so.1.2') } );
-    is( scalar( @{ $sc->{actions} } ), 0,
-        'used library is not queued in apply mode' );
+    is( scalar( @{ $sc->{actions} } ),
+        0, 'used library is not queued in apply mode' );
 
     capture_both( sub { $sc->find_sub('/usr/lib/libfoo.so.1.2') } );
-    is( scalar( @{ $sc->{actions} } ), 1,
-        'unused library is queued in apply mode' );
+    is( scalar( @{ $sc->{actions} } ),
+        1, 'unused library is queued in apply mode' );
 };
 
 subtest 'queue helpers' => sub {
@@ -242,8 +272,8 @@ subtest 'queue helpers' => sub {
     $ro->queue_user( 'foo', 500 );
     $ro->queue_group( 'foo', 500 );
     $ro->queue_user_mod( 'foo', 500, '-s', '/sbin/nologin' );
-    is( scalar( @{ $ro->{actions} } ), 0,
-        'no action queued outside apply mode' );
+    is( scalar( @{ $ro->{actions} } ),
+        0, 'no action queued outside apply mode' );
 
     my $rw = new_sysclean( apply => 1 );
     $rw->queue_path('/x');
@@ -251,16 +281,19 @@ subtest 'queue helpers' => sub {
     $rw->queue_group( 'foo', 500 );
     $rw->queue_user_mod( 'foo', 500, '-s', '/sbin/nologin' );
 
-    is( scalar( @{ $rw->{actions} } ), 4, 'actions queued in apply mode' );
-    is( $rw->{actions}[1]{uid}, 500, 'user uid is recorded' );
-    is( $rw->{actions}[2]{gid}, 500, 'group gid is recorded' );
-    is_deeply( $rw->{actions}[3]{opts}, [ '-s', '/sbin/nologin' ],
-        'usermod options are recorded' );
+    is( scalar( @{ $rw->{actions} } ), 4,   'actions queued in apply mode' );
+    is( $rw->{actions}[1]{uid},        500, 'user uid is recorded' );
+    is( $rw->{actions}[2]{gid},        500, 'group gid is recorded' );
+    is_deeply(
+        $rw->{actions}[3]{opts},
+        [ '-s', '/sbin/nologin' ],
+        'usermod options are recorded'
+    );
 };
 
 subtest 'prepare_apply path-only policy' => sub {
-    my $sc  = new_sysclean();
-    my $dir = tempdir(CLEANUP => 1);
+    my $sc   = new_sysclean();
+    my $dir  = tempdir( CLEANUP => 1 );
     my $file = "$dir/obsolete";
 
     plan skip_all => 'temporary directory has a symlinked ancestor'
@@ -269,14 +302,14 @@ subtest 'prepare_apply path-only policy' => sub {
     open( my $fh, '>', $file ) or die "open $file: $!";
     close($fh);
 
-    @OpenBSD::Unveil::UNVEILS = ();
+    @OpenBSD::Unveil::UNVEILS  = ();
     $OpenBSD::Unveil::LOCKED   = 0;
     @OpenBSD::Pledge::PROMISES = ();
 
-    my @paths = ($file);
-    my @users = ();
+    my @paths  = ($file);
+    my @users  = ();
     my @groups = ();
-    my @mods = ();
+    my @mods   = ();
     $sc->prepare_apply( \@paths, \@users, \@groups, \@mods );
 
     ok( $OpenBSD::Unveil::LOCKED, 'unveil is locked' );
@@ -288,12 +321,14 @@ subtest 'prepare_apply path-only policy' => sub {
         'proc is not promised without account operations' );
 
     my @unveiled = map { $_->[0] } @OpenBSD::Unveil::UNVEILS;
-    ok( scalar( grep { $_ eq $dir } @unveiled ),
-        'removal directory is unveiled' );
+    ok(
+        scalar( grep { $_ eq $dir } @unveiled ),
+        'removal directory is unveiled'
+    );
 };
 
 subtest 'apply integration' => sub {
-    my $dir  = tempdir(CLEANUP => 1);
+    my $dir  = tempdir( CLEANUP => 1 );
     my $file = "$dir/obsolete";
     my $sc   = new_sysclean();
 
@@ -305,20 +340,20 @@ subtest 'apply integration' => sub {
 
     $sc->{actions} = [ { type => 'path', name => $file } ];
 
-    @OpenBSD::Unveil::UNVEILS = ();
+    @OpenBSD::Unveil::UNVEILS  = ();
     $OpenBSD::Unveil::LOCKED   = 0;
     @OpenBSD::Pledge::PROMISES = ();
 
     my ( $out, $err ) = capture_both( sub { $sc->apply } );
 
     ok( !-e $file, 'obsolete file removed by apply' );
-    is( $sc->{removed}{files}, 1, 'file removal counted' );
+    is( $sc->{removed}{files},  1, 'file removal counted' );
     is( $sc->{removed}{failed}, 0, 'no failure counted' );
     like( $out, qr/unlink/, 'removal is reported' );
 };
 
 subtest 'apply refuses an expected path' => sub {
-    my $dir  = tempdir(CLEANUP => 1);
+    my $dir  = tempdir( CLEANUP => 1 );
     my $file = "$dir/keep";
     my $sc   = new_sysclean( expected => {} );
 
@@ -331,7 +366,7 @@ subtest 'apply refuses an expected path' => sub {
     $sc->{expected}{$file} = 1;
     $sc->{actions} = [ { type => 'path', name => $file } ];
 
-    @OpenBSD::Unveil::UNVEILS = ();
+    @OpenBSD::Unveil::UNVEILS  = ();
     $OpenBSD::Unveil::LOCKED   = 0;
     @OpenBSD::Pledge::PROMISES = ();
 
@@ -339,7 +374,7 @@ subtest 'apply refuses an expected path' => sub {
     capture_both( sub { $rc = $sc->apply } );
 
     ok( -e $file, 'expected file is preserved' );
-    is( $rc, 1, 'apply reports failure' );
+    is( $rc,                    1, 'apply reports failure' );
     is( $sc->{removed}{failed}, 1, 'refusal is counted' );
 };
 

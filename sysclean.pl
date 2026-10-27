@@ -67,7 +67,7 @@ sub create( $base, $options ) {
       if ( $apply && !defined $$options{i} );
 
     sysclean->warning(
-        "-x with -a: recognized used libraries are protected from removal" )
+        "-x with -a: recognized used libraries are protected from removal")
       if ( $apply && defined $$options{a} );
 
     return $base->subclass($options)->new( $with_ignored, $apply );
@@ -201,8 +201,8 @@ sub init($self) {
     eval { lock_db(1) };
     $self->err( 1, "can't lock package database: $@" ) if $@;
 
-    unveil( '/',               'r' ) || $self->err( 1, "unveil '/': $!" );
-    unveil( '/dev/MAKEDEV',    'rx' )
+    unveil( '/',            'r' ) || $self->err( 1, "unveil '/': $!" );
+    unveil( '/dev/MAKEDEV', 'rx' )
       || $self->err( 1, "unveil '/dev/MAKEDEV': $!" );
     unveil( '/usr/bin/locate', 'rx' )
       || $self->err( 1, "unveil '/usr/bin/locate': $!" );
@@ -297,6 +297,7 @@ sub add_expected_base($self) {
         chomp;
         my ( undef, $filename ) = split( ':', $_, 2 );
         next if !defined($filename) || !length($filename);
+
         # Collapse repeated separators and remove a trailing slash so locate
         # results use the same exact-path form as File::Find.
         $filename =~ s{//+}{/}g;
@@ -504,7 +505,8 @@ sub add_expected_rcctl($self) {
 
     my $closed = close($cmd);
     if ( !$closed ) {
-        $self->err( 1, "rcctl failed; refusing to apply an incomplete service list" )
+        $self->err( 1,
+            "rcctl failed; refusing to apply an incomplete service list" )
           if $self->{apply};
         $self->warning("rcctl failed; service inventory may be incomplete");
     }
@@ -522,8 +524,8 @@ sub add_expected_users($self) {
 
     # Build both the expected group keys and the gid-to-name lookup needed to
     # turn master.passwd primary gids into comparable group names.
-    my %groups        = ();
-    my $group         = $tar->get_content('./etc/group');
+    my %groups = ();
+    my $group  = $tar->get_content('./etc/group');
     $group = $tar->get_content('etc/group') if !defined($group);
     my $group_entries = 0;
     $self->err( 1, "missing ./etc/group in /var/sysmerge/etc.tgz" )
@@ -532,12 +534,12 @@ sub add_expected_users($self) {
     foreach my $entry ( grep { length } split( /\n/, $group ) ) {
         my ( $name, $passwd, $gid, $members ) = split( /:/, $entry, -1 );
         next if !defined($name) || !length($name);
-        next if !defined($gid) || !length($gid);
+        next if !defined($gid)  || !length($gid);
         $self->err( 1, "invalid gid for group '$name' in etc.tgz" )
           if $gid !~ m{^\d+$};
         my $group_key = join( ':', ( $name, $gid ) );
 
-        $groups{$gid} = $name;
+        $groups{$gid}                = $name;
         $self->{groups}{$group_key}  = 1;
         $self->{group_fields}{$name} = $gid;
         $group_entries++;
@@ -560,7 +562,7 @@ sub add_expected_users($self) {
             $change, $expire, $gecos, $home, $shell
         ) = split( /:/, $entry, -1 );
         next if !defined($name) || !length($name);
-        next if !defined($uid) || !length($uid);
+        next if !defined($uid)  || !length($uid);
         $self->err( 1, "invalid uid for user '$name' in etc.tgz" )
           if $uid !~ m{^\d+$};
         $self->err( 1, "invalid gid for user '$name' in etc.tgz" )
@@ -636,6 +638,7 @@ sub add_expected_ports_info($self) {
 sub plist_reader($self) {
     return sub ( $fh, $cont ) {
         while (<$fh>) {
+
             # Keep ordinary PLIST lines and only the annotations recognized by
             # the walker; the second match distinguishes annotations from files.
             next
@@ -787,12 +790,10 @@ sub walk_users($self) {
 
         my $gname = getgrgid($gid);
         $gname = $gid if !defined($gname);
-        my $user =
-          join( ':',
+        my $user = join( ':',
             map { defined($_) ? $_ : '' }
               ( $name, $uid, $gname, $class, $home, $shell ) );
-        my $user_gid =
-          join( ':',
+        my $user_gid = join( ':',
             map { defined($_) ? $_ : '' }
               ( $name, $uid, $gid, $class, $home, $shell ) );
         my $short = join( ':', ( $name, $uid ) );
@@ -837,8 +838,7 @@ sub walk_users($self) {
                 );
             }
             elsif (@changed) {
-                print( '@user ', $user,
-                    " => ", join( ' / ', @changed ), "\n" );
+                print( '@user ', $user, " => ", join( ' / ', @changed ), "\n" );
             }
             next;
         }
@@ -851,13 +851,16 @@ sub walk_users($self) {
             if ( !defined( $uf->{uid} ) || $uid != $uf->{uid} ) {
                 if ( $self->{apply} ) {
                     $self->warning(
-                        "not removing user '$name': uid $uid differs from reference"
+"not removing user '$name': uid $uid differs from reference"
                     );
                     $self->{removed}{failed}++;
                 }
                 else {
-                    print( '@user ', $user, " => uid is $uid, should be ",
-                        defined( $uf->{uid} ) ? $uf->{uid} : 'unknown', "\n" );
+                    print(
+                        '@user ', $user,
+                        " => uid is $uid, should be ",
+                        defined( $uf->{uid} ) ? $uf->{uid} : 'unknown', "\n"
+                    );
                 }
                 next;
             }
@@ -904,14 +907,17 @@ sub walk_groups($self) {
             if ( !defined($expected_gid) || $gid != $expected_gid ) {
                 if ( $self->{apply} ) {
                     $self->warning(
-                        "not removing group '$name': gid $gid differs from reference"
+"not removing group '$name': gid $gid differs from reference"
                     );
                     $self->{removed}{failed}++;
                 }
                 else {
-                    print( '@group ', $group, " => gid is $gid, should be ",
+                    print(
+                        '@group ', $group,
+                        " => gid is $gid, should be ",
                         defined($expected_gid) ? $expected_gid : 'unknown',
-                        "\n" );
+                        "\n"
+                    );
                 }
                 next;
             }
@@ -955,16 +961,14 @@ sub queue_path( $self, $filename ) {
 # reuse between scanning and helper invocation.
 sub queue_user( $self, $name, $uid ) {
     return unless $self->{apply};
-    push @{ $self->{actions} },
-      { type => 'user', name => $name, uid => $uid };
+    push @{ $self->{actions} }, { type => 'user', name => $name, uid => $uid };
 }
 
 # Preserve the observed group id for the same revalidation performed before
 # groupdel(8).
 sub queue_group( $self, $name, $gid ) {
     return unless $self->{apply};
-    push @{ $self->{actions} },
-      { type => 'group', name => $name, gid => $gid };
+    push @{ $self->{actions} }, { type => 'group', name => $name, gid => $gid };
 }
 
 # Queue a changed user only when there is at least one concrete option pair;
@@ -1021,7 +1025,7 @@ sub path_has_symlink_ancestor( $self, $path ) {
     my $dir = dirname($path);
     while (1) {
         return 1 if -l $dir;
-        last if $dir eq '/' || $dir eq '.';
+        last     if $dir eq '/' || $dir eq '.';
         my $parent = dirname($dir);
         last if $parent eq $dir;
         $dir = $parent;
@@ -1035,7 +1039,7 @@ sub path_has_ignored_ancestor( $self, $path ) {
     my $dir = dirname($path);
     while (1) {
         return 1 if exists $self->{ignored}{$dir};
-        last if $dir eq '/' || $dir eq '.';
+        last     if $dir eq '/' || $dir eq '.';
         my $parent = dirname($dir);
         last if $parent eq $dir;
         $dir = $parent;
@@ -1047,6 +1051,7 @@ sub path_has_ignored_ancestor( $self, $path ) {
 # again before removal. The returned reason is used for both diagnostics and
 # failure accounting; undef means only that these checks passed.
 sub check_removable_path( $self, $path ) {
+
     # These whole-path patterns reject duplicate separators, dot components,
     # and trailing separators before the path can be used as an action key.
     return "empty pathname"           if ( !defined($path) || $path eq '' );
@@ -1157,12 +1162,10 @@ sub check_removable_user( $self, $name, $uid ) {
 
     my $gname = getgrgid($gid);
     $gname = $gid if !defined($gname);
-    my $user =
-      join( ':',
+    my $user = join( ':',
         map { defined($_) ? $_ : '' }
           ( $name, $current_uid, $gname, $class, $home, $shell ) );
-    my $user_gid =
-      join( ':',
+    my $user_gid = join( ':',
         map { defined($_) ? $_ : '' }
           ( $name, $current_uid, $gid, $class, $home, $shell ) );
     my $short = join( ':', ( $name, $current_uid ) );
@@ -1362,7 +1365,7 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
     }
 
     # no further unveil(2) calls are allowed after this point
-    unveil() || $self->err( 1, "unveil lock: $!" );
+    unveil()          || $self->err( 1, "unveil lock: $!" );
     pledge($promises) || $self->err( 1, "pledge" );
     return 1;
 }
@@ -1373,7 +1376,7 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
 sub apply($self) {
     my @paths = map { $_->{name} }
       grep { $_->{type} eq 'path' } @{ $self->{actions} };
-    my @users = grep { $_->{type} eq 'user' } @{ $self->{actions} };
+    my @users  = grep { $_->{type} eq 'user' } @{ $self->{actions} };
     my @groups = grep { $_->{type} eq 'group' } @{ $self->{actions} };
     my @user_mods =
       grep { $_->{type} eq 'user_mod' } @{ $self->{actions} };
@@ -1382,17 +1385,16 @@ sub apply($self) {
     my %seen = ();
     @paths = grep { !$seen{"p\0$_"}++ } @paths;
     %seen  = ();
-    @users = grep {
-        !$seen{ join( "\0", 'u', $_->{name}, $_->{uid} // '' ) }++
-    } @users;
+    @users = grep { !$seen{ join( "\0", 'u', $_->{name}, $_->{uid} // '' ) }++ }
+      @users;
     %seen = ();
-    @groups = grep {
-        !$seen{ join( "\0", 'g', $_->{name}, $_->{gid} // '' ) }++
-    } @groups;
+    @groups =
+      grep { !$seen{ join( "\0", 'g', $_->{name}, $_->{gid} // '' ) }++ }
+      @groups;
     %seen = ();
-    @user_mods = grep {
-        !$seen{ join( "\0", 'm', $_->{name}, $_->{uid} // '' ) }++
-    } @user_mods;
+    @user_mods =
+      grep { !$seen{ join( "\0", 'm', $_->{name}, $_->{uid} // '' ) }++ }
+      @user_mods;
 
     $self->prepare_apply( \@paths, \@users, \@groups, \@user_mods );
 
@@ -1432,10 +1434,11 @@ use parent -norequire, qw(sysclean);
 # List every unexpected path in read-only mode. Apply mode adds one narrow
 # library-name check so recognized package-used libraries are not queued.
 sub find_sub( $self, $filename ) {
+
     # -a is an all-files listing, but apply mode must not remove a library
     # that an installed package still uses.  Keep the listing behavior in
     # read-only mode and refuse the removal here.
-    if ( $self->{apply}
+    if (   $self->{apply}
         && $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|
         && $self->{used_libs}
         && exists $self->{used_libs}{"$1$2"} )
@@ -1471,6 +1474,7 @@ sub add_expected_base_one( $self, $filename ) {
 # then a newer local ABI version. The pattern captures the library stem and
 # numeric major/minor suffix used as the {used_libs} key.
 sub find_sub( $self, $filename ) {
+
     # Capture the stem and the complete .so.major.minor suffix so this key
     # matches the format stored by Wantlib elements.
     if ( $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|o ) {
@@ -1531,12 +1535,12 @@ sub walk($self) {
 # Match shared-library filenames, derive the same stem/version key populated
 # by Wantlib elements, and emit one filename/package row per recorded consumer.
 sub find_sub( $self, $filename ) {
+
     # Use the same stem/suffix split as default mode to look up package users.
     if ( $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|o ) {
         my $wantlib = "$1$2";
 
-        for my $pkgname (
-            @{ ( $self->{used_libs} // {} )->{$wantlib} // [] } )
+        for my $pkgname ( @{ ( $self->{used_libs} // {} )->{$wantlib} // [] } )
         {
             print( $filename, "\t", $pkgname, "\n" );
         }
@@ -1560,7 +1564,7 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 # undefined values remain undefined for later partial-field comparisons.
 sub pkg_account_value {
     my ($value) = @_;
-    return undef if !defined($value);
+    return undef if !defined($value);    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
     $value =~ s/^!//;
     return $value;
 }
@@ -1574,7 +1578,7 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 
     my $path = $item->name;
     $path =~ s{//+}{/}g if defined($path);
-    $path =~ s{/+$}{} if defined($path) && $path ne '/';
+    $path =~ s{/+$}{}   if defined($path) && $path ne '/';
     return if !defined($path) || !length($path) || $path !~ m{^/};
 
     do {
@@ -1608,7 +1612,7 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
     my $name = OpenBSD::PackingElement::pkg_account_value( $item->{name} );
     my $gid  = OpenBSD::PackingElement::pkg_account_value( $item->{gid} );
 
-    return if !defined($name) || !length($name);
+    return       if !defined($name) || !length($name);
     $gid = undef if defined($gid) && $gid !~ m{^\d+$};
 
     my $group = join( ':', $name, defined($gid) ? $gid : '' );
@@ -1632,15 +1636,14 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
     $field{uid} = undef
       if defined( $field{uid} ) && $field{uid} !~ m{^\d+$};
 
-    my $user =
-      join( ':', map { defined( $field{$_} ) ? $field{$_} : '' }
+    my $user = join( ':',
+        map { defined( $field{$_} ) ? $field{$_} : '' }
           qw(name uid group class home shell) );
     my $short =
-      join( ':', map { defined( $field{$_} ) ? $field{$_} : '' }
-          qw(name uid) );
+      join( ':', map { defined( $field{$_} ) ? $field{$_} : '' } qw(name uid) );
 
-    $sc->{users}{$user}  = 1;
-    $sc->{users}{$short} = 1;
+    $sc->{users}{$user}                = 1;
+    $sc->{users}{$short}               = 1;
     $sc->{user_fields}{ $field{name} } = {
         uid   => $field{uid},
         class => $field{class},

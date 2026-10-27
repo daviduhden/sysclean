@@ -1,9 +1,11 @@
 package OpenBSD::Unveil;
 
+use strict;
+
 use Exporter 'import';
-our @EXPORT = qw(unveil);
+our @EXPORT  = qw(unveil);
 our @UNVEILS = ();
-our $LOCKED = 0;
+our $LOCKED  = 0;
 
 sub unveil {
     if (@_) {

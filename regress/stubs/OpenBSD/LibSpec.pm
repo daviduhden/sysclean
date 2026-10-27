@@ -1,5 +1,7 @@
 package OpenBSD::LibSpec;
 
+use strict;
+
 package OpenBSD::Library;
 
 sub from_string {

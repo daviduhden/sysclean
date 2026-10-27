@@ -1,6 +1,8 @@
 package OpenBSD::PackingList;
 
-sub from_installation { return undef }
-sub DependOnly       { return }
+use strict;
+
+sub from_installation { return undef }    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
+sub DependOnly        { return }
 
 1;

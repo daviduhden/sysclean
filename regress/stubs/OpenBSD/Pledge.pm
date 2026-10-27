@@ -1,7 +1,9 @@
 package OpenBSD::Pledge;
 
+use strict;
+
 use Exporter 'import';
-our @EXPORT = qw(pledge);
+our @EXPORT   = qw(pledge);
 our @PROMISES = ();
 
 sub pledge {
