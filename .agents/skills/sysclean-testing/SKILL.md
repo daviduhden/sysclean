@@ -60,6 +60,13 @@ Use instead:
 * `run-regress-man-date`: checks `.Dd` against the last commit date of
   `sysclean.8`.
 
+Run `perl regress/check-agent-maintenance.pl --lint` to validate instruction
+structure and local references. Add `--base <git-revision>` to require a
+substantive agent/skill instruction change alongside repository changes.
+GitHub Actions runs that mode for pull requests; run it locally against the
+target branch before completing a change. It validates structure and detectable
+references, but cannot judge whether the update is factually relevant.
+
 `regress/apply.t` covers path validation, ignored/expected refusal,
 symlinked-ancestor refusal, regular file/symlink/empty-directory removal,
 non-empty directory refusal, account-name and `usermod` argument validation,
@@ -162,3 +169,31 @@ Idempotence/plan:
 * `AUDIT.md`: limitations that require VM/negative tests.
 * `AGENTS.md`: absolute safety rule.
 * OpenBSD manuals: `Test::More(3p)`, `File::Temp(3p)`.
+
+## Maintenance & Continuous Learning
+
+When this skill is used to change the repository, the agent MUST complete this
+review before reporting the task complete:
+
+* Re-read the applicable root/path `AGENTS.md` files and this skill after the
+  implementation; identify other skills and agent instructions affected by the
+  changed behavior, paths, tools, configuration, or safety assumptions.
+* Update this skill or the other affected instruction files with verified,
+  reusable knowledge when procedures, tools, examples, validation commands, or
+  project assumptions have changed. Every repository change must include a
+  substantive, relevant agent/skills update; do not make cosmetic or empty
+  edits to satisfy the rule.
+* Remove stale or conflicting guidance, preserve this skill's frontmatter, and
+  validate local references and consistency with the implementation. If no
+  reusable update is warranted for this skill, identify which other applicable
+  agent/skill file carries the maintenance update.
+* Run `perl regress/check-agent-maintenance.pl --lint` and, before completion,
+  `perl regress/check-agent-maintenance.pl --base <target-branch>`. Also run
+  relevant checks listed by this skill. Report checks only when they were run.
+* If this skill, another skill, or agent policy changes, review the complete
+  instruction set once and repeat validation only to correct a discovered
+  inconsistency. Do not add one-run notes that will not help future work.
+
+Include an **Agent & Skills Synchronization** section in the final report. Name
+the agents and skills reviewed, instruction files updated, reusable knowledge
+added or corrected, validations run, and status **PASS** or **FAIL**.

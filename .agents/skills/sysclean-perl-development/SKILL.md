@@ -142,3 +142,31 @@ Do not use this skill for:
 * `AGENTS.md`: development conventions and security policy.
 * OpenBSD manuals: `perl(1)`, `perlsub(1)`, `perlsec(1)`, `perlre(1)`,
   `open(2)`, `execve(2)`.
+
+## Maintenance & Continuous Learning
+
+When this skill is used to change the repository, the agent MUST complete this
+review before reporting the task complete:
+
+* Re-read the applicable root/path `AGENTS.md` files and this skill after the
+  implementation; identify other skills and agent instructions affected by the
+  changed behavior, paths, tools, configuration, or safety assumptions.
+* Update this skill or the other affected instruction files with verified,
+  reusable knowledge when procedures, tools, examples, validation commands, or
+  project assumptions have changed. Every repository change must include a
+  substantive, relevant agent/skills update; do not make cosmetic or empty
+  edits to satisfy the rule.
+* Remove stale or conflicting guidance, preserve this skill's frontmatter, and
+  validate local references and consistency with the implementation. If no
+  reusable update is warranted for this skill, identify which other applicable
+  agent/skill file carries the maintenance update.
+* Run `perl regress/check-agent-maintenance.pl --lint` and, before completion,
+  `perl regress/check-agent-maintenance.pl --base <target-branch>`. Also run
+  relevant checks listed by this skill. Report checks only when they were run.
+* If this skill, another skill, or agent policy changes, review the complete
+  instruction set once and repeat validation only to correct a discovered
+  inconsistency. Do not add one-run notes that will not help future work.
+
+Include an **Agent & Skills Synchronization** section in the final report. Name
+the agents and skills reviewed, instruction files updated, reusable knowledge
+added or corrected, validations run, and status **PASS** or **FAIL**.

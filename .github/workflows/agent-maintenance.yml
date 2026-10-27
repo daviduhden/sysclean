@@ -1,0 +1,19 @@
+name: Agent and skills maintenance
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate agent and skill synchronization
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: perl regress/check-agent-maintenance.pl --base "$BASE_REF"

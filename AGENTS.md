@@ -18,6 +18,8 @@ handling or removal as security-sensitive.
 | `README.md` | Generated from `sysclean.8` by the `README.md` Makefile rule. |
 | `AUDIT.md` | Security review and known limitations of apply mode. Read it before changing `-x`. |
 | `Makefile` | BSD makefile (`bmake`), `bsd.prog.mk`, regression checks, installation and release tarball. |
+| `regress/check-agent-maintenance.pl` | Dependency-free structural and Git-diff enforcement for agent/skill synchronization. |
+| `.github/workflows/agent-maintenance.yml` | Pull-request enforcement for agent/skill synchronization. |
 | `sysclean.ignore` | Example ignore file shipped with the project. |
 | `regress/apply.t` | Non-destructive unit tests for apply-mode helpers. |
 | `regress/stubs/` | Stub `OpenBSD::*` modules used only by the unit tests. |
@@ -240,7 +242,11 @@ sandbox because no `execpromises` are installed.
 Safe checks for normal changes:
 
 * `perl -c sysclean.pl`
-* `make regress` (syntax, apply unit tests, man lint, README sync, man date)
+* `bmake regress` (syntax, apply unit tests, man lint, README sync, man date)
+* `perl regress/check-agent-maintenance.pl --lint` (agent/skill structure and
+  local-reference check)
+* `perl regress/check-agent-maintenance.pl --base <target-branch>` (requires
+  the target branch to be available locally)
 * `mandoc -T lint -W style sysclean.8`
 * `git diff --check`
 
@@ -276,6 +282,89 @@ Do not rewrite every document after each change.  Keep instructions
 synchronized with the code and delete stale references.  `AUDIT.md` is the
 authoritative security record; skills should reference it rather than
 duplicate it.
+
+## Continuous Agent & Skills Maintenance
+
+**Agent instructions and skills are living repository artifacts.**
+
+**Every repository modification MUST include an agent/skills synchronization
+step.** This applies to code, tests, configuration, dependencies, build and CI
+workflows, documentation, architecture, and changes to agent instructions
+themselves. A change that updates no applicable agent or skill knowledge is
+incomplete; do not satisfy this rule with cosmetic edits, timestamps, or empty
+sections.
+
+Before starting a change and again once at the end of the task:
+
+1. Inspect the root and any path-relevant `AGENTS.md` files, specialized
+   `.agent.md` files, and skills under `.agents/skills/`,
+   `.github/skills/`, `.claude/skills/`, or other tool-specific skill roots.
+   Also inspect provider instruction files such as `CLAUDE.md`, Copilot
+   instructions, and Cursor rules when present.
+2. Use the change-to-skill mapping above and each skill's **When to use**
+   section to identify the affected instructions. For cross-cutting work,
+   inspect every plausible skill and resolve overlaps instead of guessing.
+3. Update each affected `AGENTS.md`, agent, or `SKILL.md` with verified,
+   reusable knowledge: current behavior, paths, commands, validation steps,
+   safety constraints, or architecture. Correct stale or contradictory
+   instructions and validate links and cross-references.
+4. If no existing skill covers a recurring responsibility, decide whether a
+   focused skill is justified; otherwise extend the nearest skill. Do not
+   create duplicate or one-task skills. Keep Agent Skills frontmatter intact.
+5. When changing instructions, skills, or this policy, review the full
+   instruction set once for consistency. Repeat validation only if that review
+   finds and fixes an inconsistency; this avoids a maintenance loop.
+6. Run `perl regress/check-agent-maintenance.pl --lint` for structural and
+   local-reference checks. Before completing a change, run
+   `perl regress/check-agent-maintenance.pl --base <target-branch>` using the
+   branch the change will be compared against. CI runs the same change check
+   for pull requests. Also run the normal checks relevant to the implementation.
+
+The validator checks Git change paths, meaningful non-whitespace instruction
+diffs, required sections/frontmatter, Markdown fences, and local Markdown link
+targets. It cannot determine whether an update is semantically relevant or
+factually correct; a human/agent review against the implementation remains
+mandatory.
+
+> Before completing any task, inspect the applicable AGENTS.md and SKILL.md
+> files, update the affected instructions, and validate their consistency with
+> the implementation.
+>
+> A code change without the corresponding agent knowledge maintenance is
+> considered incomplete.
+>
+> Never claim completion when the synchronization step has been skipped or has
+> failed.
+
+### Mandatory Definition of Done
+
+- [ ] Repository changes implemented.
+- [ ] Relevant agent instructions reviewed.
+- [ ] Relevant skills reviewed.
+- [ ] Affected AGENTS.md / SKILL.md files updated.
+- [ ] Obsolete knowledge removed.
+- [ ] New reusable knowledge incorporated.
+- [ ] Agent and skill references validated.
+- [ ] Automated maintenance checks passed.
+- [ ] Final synchronization status reported.
+
+If a check cannot be completed, fix it or state the specific limitation and
+mark synchronization as **FAIL**; do not claim the task is complete.
+
+Every final task report must include **Agent & Skills Synchronization** and
+list the agents and skills reviewed, instruction files updated, reusable
+knowledge added or corrected, validations actually run, and a final **PASS** or
+**FAIL** status. Report semantic review separately from automated checks.
+
+### Post-Change Knowledge Synchronization
+
+Every agent working in this repository owns this synchronization step,
+regardless of the coding tool used. Agents must identify the skills related to
+their responsibilities, review them after every repository change, update them
+when implementation behavior or reusable procedures change, and verify that
+their own instructions remain accurate. They must run or delegate the
+applicable checks, report the synchronization result, and leave the task
+incomplete if required instruction updates or validation are missing.
 
 ## Skills
 
