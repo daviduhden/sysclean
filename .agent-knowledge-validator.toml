@@ -1,0 +1,8 @@
+[validator]
+contract_version = "1.0.0"
+
+[validator.strict_text]
+"AGENTS.md" = ["lf_only", "no_trailing_whitespace", "no_nul", "ascii_only"]
+"**/AGENTS.md" = ["lf_only", "no_trailing_whitespace", "no_nul", "ascii_only"]
+"**/SKILL.md" = ["lf_only", "no_trailing_whitespace", "no_nul", "ascii_only"]
+"**/*.agent.md" = ["lf_only", "no_trailing_whitespace", "no_nul", "ascii_only"]

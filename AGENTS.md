@@ -18,7 +18,7 @@ handling or removal as security-sensitive.
 | `README.md` | Generated from `sysclean.8` by the `README.md` Makefile rule. |
 | `AUDIT.md` | Security review and known limitations of apply mode. Read it before changing `-x`. |
 | `Makefile` | BSD makefile (`bmake`), `bsd.prog.mk`, regression checks, installation and release tarball. |
-| `regress/check-agent-maintenance.pl` | Dependency-free structural and Git-diff enforcement for agent/skill synchronization. |
+| `scripts/validate-agent-knowledge.py` | Dependency-free structural and Git-diff enforcement for agent/skill synchronization. |
 | `.github/workflows/agent-maintenance.yml` | Pull-request enforcement for agent/skill synchronization. |
 | `sysclean.ignore` | Example ignore file shipped with the project. |
 | `regress/apply.t` | Non-destructive unit tests for apply-mode helpers. |
@@ -243,9 +243,9 @@ Safe checks for normal changes:
 
 * `perl -c sysclean.pl`
 * `bmake regress` (syntax, apply unit tests, man lint, README sync, man date)
-* `perl regress/check-agent-maintenance.pl --lint` (agent/skill structure and
+* `python3 scripts/validate-agent-knowledge.py --scope worktree` (agent/skill structure and
   local-reference check)
-* `perl regress/check-agent-maintenance.pl --base <target-branch>` (requires
+* `python3 scripts/validate-agent-knowledge.py --scope range --base <target-branch> --head HEAD` (requires
   the target branch to be available locally)
 * `mandoc -T lint -W style sysclean.8`
 * `git diff --check`
@@ -314,9 +314,9 @@ Before starting a change and again once at the end of the task:
 5. When changing instructions, skills, or this policy, review the full
    instruction set once for consistency. Repeat validation only if that review
    finds and fixes an inconsistency; this avoids a maintenance loop.
-6. Run `perl regress/check-agent-maintenance.pl --lint` for structural and
+6. Run `python3 scripts/validate-agent-knowledge.py --scope worktree` for structural and
    local-reference checks. Before completing a change, run
-   `perl regress/check-agent-maintenance.pl --base <target-branch>` using the
+   `python3 scripts/validate-agent-knowledge.py --scope range --base <target-branch> --head HEAD` using the
    branch the change will be compared against. CI runs the same change check
    for pull requests. Also run the normal checks relevant to the implementation.
 
@@ -335,6 +335,27 @@ mandatory.
 >
 > Never claim completion when the synchronization step has been skipped or has
 > failed.
+
+### Shared Agent Knowledge Validation Contract
+
+Use `python3 scripts/validate-agent-knowledge.py --scope worktree` for local
+changes and `python3 -m unittest discover -s tests/agent_knowledge_validator -v`
+for its contract tests. The validator requires Python 3.11+ and Git, uses only
+the Python standard library, and publishes contract version `1.0.0`. All
+adopting repositories share the same CLI, AK001-AK006 identifiers, output
+schema, and exit codes (`0` pass, `1` policy failure, `2` execution/configuration
+error). For a pull request, pass both revisions with
+`--scope range --base BASE_REF --head HEAD_REF`; compare from their merge base.
+
+Read [Agent Knowledge Validation Contract](docs/agent-knowledge-validation.md)
+for the complete rules, JSON schema, optional repository configuration,
+warning semantics, and extension process. AK004 and AK006 can require human
+review; their warnings do not prove or disprove semantic correctness. Keep the
+canonical script and black-box unittest suite byte-identical across adopting
+repositories. Repository-specific requirements belong in the documented TOML
+configuration or a stable `AKX...` extension, never in a private fork of the
+shared rules. The GitHub PR workflow runs the same tests and range command;
+it does not edit files or require secrets.
 
 ### Mandatory Definition of Done
 

@@ -60,7 +60,7 @@ Use instead:
 * `run-regress-man-date`: checks `.Dd` against the last commit date of
   `sysclean.8`.
 
-Run `perl regress/check-agent-maintenance.pl --lint` to validate instruction
+Run `python3 scripts/validate-agent-knowledge.py --scope worktree` to validate instruction
 structure and local references. Add `--base <git-revision>` to require a
 substantive agent/skill instruction change alongside repository changes.
 GitHub Actions runs that mode for pull requests; run it locally against the
@@ -187,8 +187,8 @@ review before reporting the task complete:
   validate local references and consistency with the implementation. If no
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
-* Run `perl regress/check-agent-maintenance.pl --lint` and, before completion,
-  `perl regress/check-agent-maintenance.pl --base <target-branch>`. Also run
+* Run `python3 scripts/validate-agent-knowledge.py --scope worktree` and, before completion,
+  `python3 scripts/validate-agent-knowledge.py --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered
