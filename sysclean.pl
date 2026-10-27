@@ -13,32 +13,38 @@ package sysclean;
 
 use File::Basename qw(dirname);
 
-# escape control characters so that a crafted filename cannot inject
-# additional log lines into the administrator's terminal
+# Join log arguments and escape terminal control characters. This keeps a
+# filename containing newlines or escape bytes from forging additional log
+# output; it does not change the pathname used by filesystem operations.
 sub sanitize_log {
     my $msg = join( ' ', @_ );
     $msg =~ s/([\x00-\x1f\x7f])/sprintf("\\x%02x", ord($1))/ge;
     return $msg;
 }
 
-# logging helpers (same convention as the other tools)
+# Keep informational and warning messages on their established output
+# streams, and pass all message text through the same terminal-safe formatter.
 sub logi { print "[INFO] ", sanitize_log(@_), "\n" }
 sub logw { print STDERR "[WARN] ", sanitize_log(@_), "\n" }
 
+# Emit one sanitized fatal diagnostic and terminate with the caller's status.
 sub die_tool {
     my ( $exitcode, @msg ) = @_;
     print STDERR "[ERROR] ", sanitize_log(@msg), "\n";
     exit $exitcode;
 }
 
-# return subclass according to options
+# Select the scanner policy: -a includes every unexpected path, -p reports
+# obsolete libraries with package consumers, and the default filters libraries.
 sub subclass( $self, $options ) {
     return 'sysclean::allfiles' if ( defined $$options{a} );
     return 'sysclean::packages' if ( defined $$options{p} );
     return 'sysclean::files';
 }
 
-# choose class for mode, depending on %options
+# Validate incompatible mode combinations, derive whether user ignore files
+# participate, and construct the selected scanner. In apply mode, -i means
+# honor those files; in read-only mode it means omit them.
 sub create( $base, $options ) {
     my $apply      = defined $$options{x};
     my $mode_count = 0;
@@ -67,7 +73,9 @@ sub create( $base, $options ) {
     return $base->subclass($options)->new( $with_ignored, $apply );
 }
 
-# constructor
+# Initialize all inventories and apply counters before loading references.
+# The hashes are sets keyed by exact path/account forms; actions are deferred
+# until the scan has completed so discovery remains separate from mutation.
 sub new( $class, $with_ignored, $apply ) {
     my $self = bless {}, $class;
 
@@ -116,28 +124,30 @@ sub new( $class, $with_ignored, $apply ) {
     return $self;
 }
 
-# print usage and exit
+# Print the accepted option shape and exit with a usage failure.
 sub usage($self) {
     print "usage: $0 [ -a | -p ] [-i] [-x]\n";
     exit 1;
 }
 
-# print error and exit
+# Route fatal scanner errors through the common sanitized diagnostic helper.
 sub err( $self, $exitcode, @rest ) {
     die_tool( $exitcode, @rest );
 }
 
-# print warning
+# Report a recoverable issue on stderr without changing the failure count.
 sub warning( $self, @rest ) {
     logw("@rest");
 }
 
-# print an informational message
+# Report progress on stdout using the common sanitized formatter.
 sub note( $self, @rest ) {
     logi("@rest");
 }
 
-# initial list of ignored files and directories
+# Seed exact protected paths and subtrees that are local, writable, generated,
+# or otherwise outside the reference inventory. Directory entries also prune
+# their descendants during File::Find traversal.
 sub init_ignored($self) {
     $self->{ignored} = {
         '/home'                    => 1,
@@ -177,6 +187,9 @@ sub init_ignored($self) {
     }
 }
 
+# Load OpenBSD interfaces, establish the initial filesystem view, and build
+# reference inventories. Read-only mode installs its syscall ceiling only
+# after external helpers have completed; apply mode tightens it later.
 sub init($self) {
     use OpenBSD::PackageInfo;
     use OpenBSD::Pledge;
@@ -208,8 +221,9 @@ sub init($self) {
     $self->add_expected_ports_info;
 }
 
-# add expected files from base. call `add_expected_base_one' overriden method.
-# WARNING: `expected' attribute is overrided
+# Build the base expected-path set from fixed paths, hostnames, and locate
+# data. Initialization adds device, service, account, and package references
+# afterward; subclasses may specialize individual source methods.
 sub add_expected_base($self) {
 
     # simple files expected (and not in locate databases)
@@ -258,7 +272,8 @@ sub add_expected_base($self) {
         $self->{expected}{$filename} = 1;
     }
 
-    # expected files, from locate databases
+    # The source database is required; the X database is optional on systems
+    # without X. Locate output is normalized before it becomes an exact key.
     use OpenBSD::Paths;
 
     my $srcdb = OpenBSD::Paths->srclocatedb;
@@ -282,6 +297,8 @@ sub add_expected_base($self) {
         chomp;
         my ( undef, $filename ) = split( ':', $_, 2 );
         next if !defined($filename) || !length($filename);
+        # Collapse repeated separators and remove a trailing slash so locate
+        # results use the same exact-path form as File::Find.
         $filename =~ s{//+}{/}g;
         $filename =~ s{/+$}{} if $filename ne '/';
         next if $filename !~ m{^/};
@@ -302,12 +319,15 @@ sub add_expected_base($self) {
     }
 }
 
-# default method for manipulated one expected filename of base.
+# Add one normalized base path. The files-mode subclass also records reference
+# shared-library versions here, so callers must use this dispatch point.
 sub add_expected_base_one( $self, $filename ) {
     $self->{expected}{$filename} = 1;
 }
 
-# add expected files from /dev
+# Ask MAKEDEV to print its planned commands, then interpret only the command
+# forms needed to discover device names. The helper is run with eo=echo, so its
+# output is parsed rather than executed by this method.
 sub add_expected_dev($self) {
 
     # set 'eo=echo' in env, to run MAKEDEV(8) in echo mode.
@@ -323,7 +343,8 @@ sub add_expected_dev($self) {
     while (<$dev>) {
         chomp;
 
-        # simplify command separator
+        # Normalize the shell-style separators emitted by MAKEDEV to a single
+        # delimiter before splitting; this code parses names and runs no output.
         s/\s*(?:;|&&|\|\|)\s*/;/g;
 
         # iterate on commands
@@ -399,7 +420,9 @@ sub add_expected_dev($self) {
       if $dev_entries == 0;
 }
 
-# add expected files from enabled daemons and services.
+# Map enabled rcctl service names to their known generated files or protected
+# runtime trees. Unknown service names add nothing; a failed listing is fatal
+# in apply mode because it would make the expected inventory incomplete.
 sub add_expected_rcctl($self) {
     open( my $cmd, '-|', 'rcctl', 'ls', 'on' )
       || $self->err( 1, "can't read enabled daemons and services" );
@@ -487,7 +510,9 @@ sub add_expected_rcctl($self) {
     }
 }
 
-# add expected information for users/groups.
+# Read the reference master.passwd and group files from sysmerge's archive.
+# The resulting sets support exact account matching, while field hashes retain
+# the reference values needed to identify modified accounts and uid/gid reuse.
 sub add_expected_users($self) {
     use Archive::Tar;
 
@@ -495,7 +520,8 @@ sub add_expected_users($self) {
     $tar->read( '/var/sysmerge/etc.tgz', COMPRESS_GZIP )
       || $self->err( 1, "can't read /var/sysmerge/etc.tgz" );
 
-    # add groups (and keep track of gid -> gname association)
+    # Build both the expected group keys and the gid-to-name lookup needed to
+    # turn master.passwd primary gids into comparable group names.
     my %groups        = ();
     my $group         = $tar->get_content('./etc/group');
     $group = $tar->get_content('etc/group') if !defined($group);
@@ -519,7 +545,8 @@ sub add_expected_users($self) {
     $self->err( 1, "empty ./etc/group in /var/sysmerge/etc.tgz" )
       if $group_entries == 0;
 
-    # add users
+    # Store a full comparison key plus name:uid. The short key distinguishes a
+    # modified account from an account absent from the reference altogether.
     my $passwd_content = $tar->get_content('./etc/master.passwd');
     $passwd_content = $tar->get_content('etc/master.passwd')
       if !defined($passwd_content);
@@ -566,8 +593,9 @@ sub add_expected_users($self) {
 
 }
 
-# add expected information from ports. the method will call `plist_reader'
-# overriden method.
+# Walk installed package packing lists through mode-specific readers and
+# element handlers. Partial packages and unreadable lists make the reference
+# incomplete, so apply mode stops instead of treating missing entries as stale.
 sub add_expected_ports_info($self) {
     use OpenBSD::PackageInfo;
     use OpenBSD::PackingList;
@@ -602,9 +630,14 @@ sub add_expected_ports_info($self) {
 }
 
 # default plist_reader sub. could be overrided.
+# Return the base PLIST line filter. It forwards recognized annotations and
+# ordinary entries to the parser callback, while dropping unsupported
+# annotation lines before the PackingList walker sees them.
 sub plist_reader($self) {
     return sub ( $fh, $cont ) {
         while (<$fh>) {
+            # Keep ordinary PLIST lines and only the annotations recognized by
+            # the walker; the second match distinguishes annotations from files.
             next
               if !
 m/^\@(?:cwd|name|info|fontdir|man|mandir|file|dir|lib|shell|so|static-lib|extra|sample|bin|rcscript|wantlib|newuser|newgroup)\b/o
@@ -614,10 +647,9 @@ m/^\@(?:cwd|name|info|fontdir|man|mandir|file|dir|lib|shell|so|static-lib|extra|
     }
 }
 
-# add user-defined `ignored' elements.  top-level configuration files are
-# optional (they may not exist), but a file named by @include must be
-# readable: silently dropping an @include would remove a protection that the
-# administrator explicitly configured.
+# Load path and account exclusions from changelist-compatible configuration.
+# Top-level files may be absent, but included files are required: ignoring a
+# failed include could silently remove an administrator-configured safeguard.
 sub add_user_ignored( $self, $conffile, $required = 0 ) {
 
     # guard against "@include" loops: a configuration file is processed only
@@ -637,12 +669,14 @@ sub add_user_ignored( $self, $conffile, $required = 0 ) {
         # strip starting '+' (compat with changelist(5) format)
         s/^\+//;
 
-        # strip whole-line and whitespace-separated comments; a '#' without
-        # preceding whitespace is part of the pathname
+        # Strip whole-line comments and comments preceded by whitespace. A '#'
+        # attached directly to a path remains part of that path.
         s/^\s*#.*$//;
         s/\s+#.*$//;
         next if (m/^\s*$/o);
 
+        # Capture the quoted include path as one argument; the anchored match
+        # rejects trailing non-whitespace text after the closing quote.
         if (m/^\@include\s+"(.*)"\s*$/) {
 
             # include another conffile; a missing include is a configuration
@@ -697,7 +731,9 @@ sub add_user_ignored( $self, $conffile, $required = 0 ) {
     return 1;
 }
 
-# walk the filesystem. the method will call `find_sub' overriden method.
+# Traverse from / without following symlinks or changing the process directory.
+# Ignored paths prune immediately; unexpected directories are reported as one
+# candidate and pruned, so the expected set must include legitimate ancestors.
 sub walk_filesystem($self) {
     use File::Find;
 
@@ -731,7 +767,9 @@ sub walk_filesystem($self) {
     );
 }
 
-# walk all users in the system.
+# Compare system accounts below uid 1000 with the reference and ignore sets.
+# Matching name:uid accounts can produce field recommendations; a reused name
+# with a different uid is reported/refused instead of being treated as stale.
 sub walk_users($self) {
 
     # walk users
@@ -840,7 +878,8 @@ sub walk_users($self) {
     endpwent();
 }
 
-# walk all groups in the system.
+# Compare groups below gid 1000 with reference keys. A familiar name with a
+# different gid is protected from deletion because it may identify a new group.
 sub walk_groups($self) {
 
     # walk groups
@@ -893,6 +932,8 @@ sub walk_groups($self) {
     endgrent();
 }
 
+# Run account checks before filesystem traversal; in apply mode this only
+# records candidates and does not invoke account helpers or remove paths.
 sub walk($self) {
     $self->walk_users;
     $self->walk_groups;
@@ -903,25 +944,31 @@ sub walk($self) {
 # apply mode helpers
 #
 
-# record an element for later removal (only when apply mode is enabled)
+# Record exact candidates for the later apply phase. These helpers are inert
+# in read-only mode, keeping the scanner's listing behavior non-mutating.
 sub queue_path( $self, $filename ) {
     return unless $self->{apply};
     push @{ $self->{actions} }, { type => 'path', name => $filename };
 }
 
+# Preserve the observed uid/gid alongside the name so apply can detect account
+# reuse between scanning and helper invocation.
 sub queue_user( $self, $name, $uid ) {
     return unless $self->{apply};
     push @{ $self->{actions} },
       { type => 'user', name => $name, uid => $uid };
 }
 
+# Preserve the observed group id for the same revalidation performed before
+# groupdel(8).
 sub queue_group( $self, $name, $gid ) {
     return unless $self->{apply};
     push @{ $self->{actions} },
       { type => 'group', name => $name, gid => $gid };
 }
 
-# record a modified user and the usermod(8) options to apply
+# Queue a changed user only when there is at least one concrete option pair;
+# the copied array reference keeps the action independent of the local list.
 sub queue_user_mod( $self, $name, $uid, @opts ) {
     return unless $self->{apply};
     return unless @opts;
@@ -929,7 +976,8 @@ sub queue_user_mod( $self, $name, $uid, @opts ) {
       { type => 'user_mod', name => $name, uid => $uid, opts => [@opts] };
 }
 
-# build usermod(8) options restoring the expected fields of a modified user
+# Translate differing reference fields into the supported usermod option/value
+# pairs. Undefined reference fields are left untouched rather than guessed.
 sub user_mod_args( $self, $uf, $gid, $gname, $class, $home, $shell ) {
     my @opts = ();
 
@@ -951,21 +999,24 @@ sub user_mod_args( $self, $uf, $gid, $gname, $class, $home, $shell ) {
     return @opts;
 }
 
-# number of path separators, used to order removals deepest-first
+# Count separators as a simple depth measure for ordering paths from the
+# deepest candidate to its ancestors.
 sub path_depth($path) {
     my $depth = () = $path =~ m{/}g;
     return $depth;
 }
 
+# Return a sorted copy rather than mutating the caller's action list; equal
+# depths use lexical order for deterministic processing.
 sub sort_paths_deepest_first( $self, $paths ) {
     my @sorted =
       sort { path_depth($b) <=> path_depth($a) || $a cmp $b } @$paths;
     return @sorted;
 }
 
-# return true when an ancestor directory of $path is a symbolic link.
-# unlinking the final component is safe, but following an attacker-controlled
-# ancestor would redirect the operation outside the scanned tree.
+# Check every parent component, excluding the final component. The final
+# component is handled with lstat/unlink, while a symlinked ancestor could
+# redirect an operation to a different tree.
 sub path_has_symlink_ancestor( $self, $path ) {
     my $dir = dirname($path);
     while (1) {
@@ -978,9 +1029,8 @@ sub path_has_symlink_ancestor( $self, $path ) {
     return 0;
 }
 
-# return true when $path is inside an ignored directory.  walk_filesystem()
-# already prunes those subtrees, but apply mode rechecks the property as a
-# second line of defence.
+# Check parent directories against the ignored set. Traversal already prunes
+# these trees, but apply mode repeats the check on queued exact paths.
 sub path_has_ignored_ancestor( $self, $path ) {
     my $dir = dirname($path);
     while (1) {
@@ -993,8 +1043,12 @@ sub path_has_ignored_ancestor( $self, $path ) {
     return 0;
 }
 
-# return a reason when $path must not be removed, undef otherwise
+# Validate the exact candidate before any write permission is granted and
+# again before removal. The returned reason is used for both diagnostics and
+# failure accounting; undef means only that these checks passed.
 sub check_removable_path( $self, $path ) {
+    # These whole-path patterns reject duplicate separators, dot components,
+    # and trailing separators before the path can be used as an action key.
     return "empty pathname"           if ( !defined($path) || $path eq '' );
     return "not an absolute pathname" if ( $path !~ m{^/} );
     return "refusing to remove '/'"   if ( $path eq '/' );
@@ -1013,7 +1067,9 @@ sub check_removable_path( $self, $path ) {
     return;
 }
 
-# remove a single obsolete file, or an empty directory
+# Remove one non-directory entry or one empty directory. lstat and the cached
+# stat buffer distinguish a symlink-to-directory from a directory; no branch
+# recursively descends, and every failed check or syscall increments failures.
 sub remove_path( $self, $path ) {
     if ( my $reason = $self->check_removable_path($path) ) {
         $self->warning("not removing '$path': $reason");
@@ -1052,16 +1108,16 @@ sub remove_path( $self, $path ) {
     return 0;
 }
 
-# a user/group name that is safe to pass to userdel(8)/groupdel(8)
+# Accept only account names whose first character cannot be an option prefix
+# and whose remaining characters match the account-name allowlist.
 sub valid_account_name($name) {
 
     # reject names starting with '-' to avoid option injection
     return defined($name) && $name =~ m{\A[A-Za-z0-9_][A-Za-z0-9._-]*\z};
 }
 
-# validate the option/value pairs produced by user_mod_args().  account
-# metadata is trusted, but a malformed or compromised package must not be
-# able to turn a value into an extra usermod(8) option.
+# Validate even package-derived option pairs at the helper boundary. Values
+# beginning with '-' could otherwise be parsed as additional usermod options.
 sub valid_usermod_args {
     my (@opts) = @_;
 
@@ -1081,9 +1137,9 @@ sub valid_usermod_args {
     return 1;
 }
 
-# re-read and re-check an account immediately before deleting it.  the scan
-# and the helper invocation are separated by an arbitrary amount of time; a
-# name could have been reused, or a reference file could have changed.
+# Re-read the account immediately before deletion, then compare its current
+# identity and all reference/ignore key forms. This narrows the scan-to-helper
+# race but does not make the check and external command atomic.
 sub check_removable_user( $self, $name, $uid ) {
     return "invalid name" if !valid_account_name($name);
 
@@ -1126,6 +1182,8 @@ sub check_removable_user( $self, $name, $uid ) {
     return;
 }
 
+# Re-read and validate the group name and gid immediately before groupdel(8),
+# refusing current reference or ignore matches.
 sub check_removable_group( $self, $name, $gid ) {
     return "invalid name" if !valid_account_name($name);
 
@@ -1149,7 +1207,8 @@ sub check_removable_group( $self, $name, $gid ) {
     return;
 }
 
-# remove an obsolete user with userdel(8); the home directory is preserved
+# Revalidate and invoke userdel in list form. Omitting -r preserves the home
+# directory; helper failure is recorded for the final apply status.
 sub remove_user( $self, $name, $uid ) {
     if ( my $reason = $self->check_removable_user( $name, $uid ) ) {
         $self->warning("not removing user '$name': $reason");
@@ -1172,7 +1231,7 @@ sub remove_user( $self, $name, $uid ) {
     return 0;
 }
 
-# remove an obsolete group with groupdel(8)
+# Revalidate and invoke groupdel in list form, recording any refusal or failure.
 sub remove_group( $self, $name, $gid ) {
     if ( my $reason = $self->check_removable_group( $name, $gid ) ) {
         $self->warning("not removing group '$name': $reason");
@@ -1196,7 +1255,8 @@ sub remove_group( $self, $name, $gid ) {
     return 0;
 }
 
-# apply the recommended changes to a modified system user with usermod(8)
+# Validate identity and option pairs, confirm the account still has its queued
+# uid and a reference record, then apply the list-form usermod command.
 sub modify_user( $self, $name, $opts, $uid ) {
     if ( !valid_account_name($name) ) {
         $self->warning("not modifying user '$name': invalid name");
@@ -1243,7 +1303,9 @@ sub modify_user( $self, $name, $opts, $uid ) {
     return 0;
 }
 
-# tighten the sandbox just before applying changes
+# Validate paths before granting parent-directory write access, unveil only
+# required account helpers, lock the view, and install the apply syscall set.
+# Helper children are not confined by this parent's pledge/unveil state.
 sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
 
     # Validate every path before granting write access.  A path that is going
@@ -1305,6 +1367,9 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
     return 1;
 }
 
+# Split and deduplicate the recorded actions, prepare the sandbox, then perform
+# paths, users, groups, and user modifications in that order. There is no
+# rollback: a later failure can follow earlier successful changes.
 sub apply($self) {
     my @paths = map { $_->{name} }
       grep { $_->{type} eq 'path' } @{ $self->{actions} };
@@ -1364,6 +1429,8 @@ sub apply($self) {
 package sysclean::allfiles;
 use parent -norequire, qw(sysclean);
 
+# List every unexpected path in read-only mode. Apply mode adds one narrow
+# library-name check so recognized package-used libraries are not queued.
 sub find_sub( $self, $filename ) {
     # -a is an all-files listing, but apply mode must not remove a library
     # that an installed package still uses.  Keep the listing behavior in
@@ -1387,17 +1454,25 @@ use parent -norequire, qw(sysclean);
 
 use OpenBSD::LibSpec;
 
+# Record base shared-library objects by stem so find_sub can compare an
+# unexpected version with the reference version using OpenBSD::Library.
 sub add_expected_base_one( $self, $filename ) {
     $self->SUPER::add_expected_base_one($filename);
 
-    # track libraries (should not contains duplicate)
+    # Capture the library stem from base filenames ending in numeric
+    # major/minor components; the suffix is not part of the stem key.
     if ( $filename =~ m|/lib([^/]+)\.so\.\d+\.\d+$|o ) {
         my $lib = OpenBSD::Library->from_string($filename);
         $self->{libs}{$1} = $lib if defined($lib);
     }
 }
 
+# Filter unexpected library paths in two stages: package consumers first,
+# then a newer local ABI version. The pattern captures the library stem and
+# numeric major/minor suffix used as the {used_libs} key.
 sub find_sub( $self, $filename ) {
+    # Capture the stem and the complete .so.major.minor suffix so this key
+    # matches the format stored by Wantlib elements.
     if ( $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|o ) {
 
         if ( $self->{used_libs}
@@ -1430,25 +1505,33 @@ sub find_sub( $self, $filename ) {
 package sysclean::packages;
 use parent -norequire, qw(sysclean);
 
+# Package mode omits service-generated paths because this mode only reports
+# obsolete libraries and their package consumers.
 sub add_expected_rcctl($self) {
 
     # skip add_expected_rcctl: it shouldn't contain libraries
 }
 
+# Package mode does not compare system accounts.
 sub add_expected_users($self) {
 
     # skip add_expected_users
 }
 
+# DependOnly limits package parsing to dependency annotations such as wantlib.
 sub plist_reader($self) {
     return \&OpenBSD::PackingList::DependOnly;
 }
 
+# Package mode needs the filesystem candidates but does not walk accounts.
 sub walk($self) {
     $self->walk_filesystem;
 }
 
+# Match shared-library filenames, derive the same stem/version key populated
+# by Wantlib elements, and emit one filename/package row per recorded consumer.
 sub find_sub( $self, $filename ) {
+    # Use the same stem/suffix split as default mode to look up package users.
     if ( $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|o ) {
         my $wantlib = "$1$2";
 
@@ -1466,12 +1549,15 @@ sub find_sub( $self, $filename ) {
 
 package OpenBSD::PackingElement;
 
+# Base dispatch hook for PLIST element classes with no sysclean inventory data.
 sub walk_sysclean( $item, $pkgname, $sc ) {
 }
 
 # pkg_add(1) uses a leading '!' in PLIST account fields to mark a value that
 # must not be changed.  Strip it so that the reference key matches the
 # account database instead of creating a key that can never match.
+# Remove the package-format marker that means a field is not to be changed;
+# undefined values remain undefined for later partial-field comparisons.
 sub pkg_account_value {
     my ($value) = @_;
     return undef if !defined($value);
@@ -1481,6 +1567,8 @@ sub pkg_account_value {
 
 package OpenBSD::PackingElement::Cwd;
 
+# Add a package working directory and every ancestor up to /, since the
+# filesystem walk prunes unknown directories rather than descending into them.
 sub walk_sysclean( $item, $pkgname, $sc ) {
     use File::Basename;
 
@@ -1497,6 +1585,8 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 
 package OpenBSD::PackingElement::FileObject;
 
+# Add one absolute package path to the expected set. Normalize path separators
+# and map the historical X11 app-defaults location to its system destination.
 sub walk_sysclean( $item, $pkgname, $sc ) {
     my $filename = $item->fullname;
     return if !defined($filename) || !length($filename);
@@ -1512,6 +1602,8 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 
 package OpenBSD::PackingElement::NewGroup;
 
+# Store package-provided group keys and reference gids. Non-numeric gids are
+# retained as unknown rather than used as numeric identity data.
 sub walk_sysclean( $item, $pkgname, $sc ) {
     my $name = OpenBSD::PackingElement::pkg_account_value( $item->{name} );
     my $gid  = OpenBSD::PackingElement::pkg_account_value( $item->{gid} );
@@ -1527,6 +1619,8 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 
 package OpenBSD::PackingElement::NewUser;
 
+# Store both full and name:uid keys, plus individually available reference
+# fields. PLIST group values may be either names or numeric gids.
 sub walk_sysclean( $item, $pkgname, $sc ) {
     my %field = ();
     for my $key (qw(name uid group class home shell)) {
@@ -1565,6 +1659,8 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 
 package OpenBSD::PackingElement::Sampledir;
 
+# Protect the package's sample directory from both traversal and later apply
+# validation; sample contents are intended for local administrator use.
 sub walk_sysclean( $item, $pkgname, $sc ) {
     my $filename = $item->fullname;
     return if !defined($filename) || !length($filename);
@@ -1576,6 +1672,8 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 
 package OpenBSD::PackingElement::Wantlib;
 
+# Record the package consumer under the exact library key used by the scanner's
+# filename matching logic; multiple packages may append to the same array.
 sub walk_sysclean( $item, $pkgname, $sc ) {
     push( @{ $sc->{used_libs}{ $item->name } }, $pkgname );
 }
@@ -1587,6 +1685,9 @@ package main;
 
 use Getopt::Std;
 
+# Parse flags, require root, build the selected scanner, and run its inventory.
+# Only an explicit -x reaches apply(); its nonzero failure result becomes the
+# process exit status.
 sub main {
     my %options = ();    # program flags
 
