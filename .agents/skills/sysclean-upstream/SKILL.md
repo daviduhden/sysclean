@@ -151,8 +151,8 @@ review before reporting the task complete:
   validate local references and consistency with the implementation. If no
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
-* Run `python3 scripts/validate-agent-knowledge.py --scope worktree` and, before completion,
-  `python3 scripts/validate-agent-knowledge.py --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+* Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered
