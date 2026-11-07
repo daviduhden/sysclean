@@ -19,7 +19,7 @@ handling or removal as security-sensitive.
 | `AUDIT.md` | Security review and known limitations of apply mode. Read it before changing `-x`. |
 | `Makefile` | BSD makefile (`bmake`), `bsd.prog.mk`, regression checks, installation and release tarball. |
 | `scripts/validate-agent-knowledge.pl` | Dependency-free structural and Git-diff enforcement for agent/skill synchronization. |
-| `.github/workflows/agent-knowledge-validation.yml` | Pull-request enforcement for agent/skill synchronization. |
+| `.github/workflows/agent-knowledge-validation.yml` | Manual-only enforcement for agent/skill synchronization. |
 | `sysclean.ignore` | Example ignore file shipped with the project. |
 | `regress/apply.t` | Non-destructive unit tests for apply-mode helpers. |
 | `regress/stubs/` | Stub `OpenBSD::*` modules used only by the unit tests. |
@@ -345,7 +345,7 @@ Before starting a change and again once at the end of the task:
    local-reference checks. Before completing a change, run
    `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD` using the
    branch the change will be compared against. CI runs the same change check
-   for pull requests. Also run the normal checks relevant to the implementation.
+   on manual dispatch. Also run the normal checks relevant to the implementation.
 
 The validator checks Git change paths, meaningful non-whitespace instruction
 diffs, required sections/frontmatter, Markdown fences, and local Markdown link
@@ -371,7 +371,7 @@ for its contract tests. The validator requires Perl 5.14+ (JSON::PP core) and Gi
 core Perl modules, and publishes contract version `1.0.0`. All
 adopting repositories share the same CLI, AK001-AK006 identifiers, output
 schema, and exit codes (`0` pass, `1` policy failure, `2` execution/configuration
-error). For a pull request, pass both revisions with
+error). To compare committed revisions locally, pass both with
 `--scope range --base BASE_REF --head HEAD_REF`; compare from their merge base.
 
 Read [Agent Knowledge Validation Contract](docs/agent-knowledge-validation.md)
@@ -381,8 +381,9 @@ review; their warnings do not prove or disprove semantic correctness. Keep the
 canonical script and black-box Perl suite byte-identical across adopting
 repositories. Repository-specific requirements belong in the documented TOML
 configuration or a stable `AKX...` extension, never in a private fork of the
-shared rules. The GitHub PR workflow runs the same tests and range command;
-it does not edit files or require secrets.
+shared rules. All workflows are manual-only: start them from the Actions
+tab or with `gh workflow run`; the agent workflow runs the same tests and
+worktree validation and does not edit files or require secrets.
 
 ### Mandatory Definition of Done
 

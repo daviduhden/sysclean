@@ -63,7 +63,7 @@ Use instead:
 Run `perl scripts/validate-agent-knowledge.pl --scope worktree` to validate instruction
 structure and local references. Add `--base <git-revision>` to require a
 substantive agent/skill instruction change alongside repository changes.
-GitHub Actions runs that mode for pull requests; run it locally against the
+GitHub Actions runs that mode only on manual dispatch; run it locally against the
 target branch before completing a change. It validates structure and detectable
 references, but cannot judge whether the update is factually relevant.
 
