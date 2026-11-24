@@ -48,7 +48,7 @@ There are three ignore sources:
 2. **Service/package ignores** added during inventory: `rcctl`-enabled
    service directories and package sample directories.
 3. **User ignore files**: `/etc/changelist` and `/etc/sysclean.ignore`,
-   loaded only in read-only default mode and in `-x -i`.
+   loaded in read-only default mode and with `-i` in apply or preview.
 
 Precedence in `walk_filesystem` is: **ignored first**, then expected, then
 unexpected.  An ignored path sets `File::Find::prune`, so its whole subtree
@@ -95,8 +95,10 @@ Do not replace it with a simple boolean.
   name.  The name form protects the account even if another field later
   changes.
 * `@group <name>[:gid]` records the full key and the name.
-* `@include "path"` loads another file.  A file is processed only once
-  (loop guard).  A missing include is an error; it is not silently ignored.
+* `@include "path"` loads a regular file. Relative values resolve from
+  `/`. The loop guard identifies opened files by device and inode, so
+  aliases of the same file are processed once. Required files and reported
+  read or pattern expansion errors are fatal.
 * Any other non-empty line is an error.
 
 Globs are expanded at load time, never during the destructive phase.  A
@@ -106,7 +108,9 @@ apply mode.
 
 ## Risks
 
-* A glob that matches nothing provides no protection.
+* A glob that matches nothing provides no protection. Keep standard
+  File::Glob handling of absent directories, and check reported errors and
+  expansion limit violations.
 * A stale `/etc/changelist` or a failed `@include` can silently remove a
   protection; the code now treats a missing required include as fatal.
 * An unreadable ignore file is fatal when it exists; an absent optional
@@ -167,7 +171,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

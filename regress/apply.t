@@ -294,6 +294,24 @@ subtest 'allfiles apply protects used libraries' => sub {
     );
 };
 
+subtest 'ignore includes and patterns' => sub {
+    my $dir    = tempdir( CLEANUP => 1 );
+    my $config = "$dir/ignore";
+    my $alias  = "$dir/alias";
+    open( my $fh, '>', $config ) or die "open $config: $!";
+    print {$fh} "\@include \"$alias\"\n$dir/with spaces\n$dir/absent/*\n";
+    close($fh)              or die "close $config: $!";
+    link( $config, $alias ) or die "link $alias: $!";
+
+    my $sc = new_sysclean( apply => 1 );
+    ok( $sc->add_user_ignored($config), 'load a regular ignore file' );
+    is_deeply( [ keys %{ $sc->{ignored} } ],
+        ["$dir/with spaces"],
+        'literal spaces survive and an optional unmatched pattern is empty' );
+    is( scalar( keys %{ $sc->{ignore_loaded} } ),
+        1, 'the opened file and its hard-link alias have one identity' );
+};
+
 subtest 'queue helpers' => sub {
     my $ro = new_sysclean( apply => 0 );
     $ro->queue_path('/x');

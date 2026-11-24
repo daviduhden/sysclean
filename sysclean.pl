@@ -738,16 +738,28 @@ sub library_consumers( $self, $path ) {
 # failed include could silently remove an administrator-configured safeguard.
 sub add_user_ignored( $self, $conffile, $required = 0 ) {
 
-    # guard against "@include" loops: a configuration file is processed only
-    # once, further includes of the same file are silently ignored.
-    return 1 if $self->{ignore_loaded}{$conffile};
+    # Relative includes have historically resolved under / after MAKEDEV.
+    $conffile = "/$conffile" unless $conffile =~ m{\A/};
 
     my $fh;
-    if ( !open( $fh, "<", $conffile ) ) {
-        return 0 if !$required && !-e $conffile && !-l $conffile;
-        $self->err( 1, "open \"$conffile\": $!" );
+    if ( !sysopen( $fh, $conffile, O_RDONLY | O_NONBLOCK ) ) {
+        my $error = "$!";
+        if ( !$required && $! == ENOENT ) {
+            my @entry = lstat($conffile);
+            return 0 if !@entry && $! == ENOENT;
+        }
+        $self->err( 1, "open \"$conffile\": $error" );
     }
-    $self->{ignore_loaded}{$conffile} = 1;
+    my @file = stat($fh);
+    $self->err( 1, "ignore file '$conffile' is not a regular file" )
+      unless @file && -f _;
+
+    # Device and inode also identify includes reached through an alias.
+    my $identity = join( ':', @file[ 0, 1 ] );
+    if ( $self->{ignore_loaded}{$identity}++ ) {
+        close($fh) || $self->err( 1, "close \"$conffile\": $!" );
+        return 1;
+    }
 
     while (<$fh>) {
         chomp;
@@ -763,7 +775,7 @@ sub add_user_ignored( $self, $conffile, $required = 0 ) {
 
         # Capture the quoted include path as one argument; the anchored match
         # rejects trailing non-whitespace text after the closing quote.
-        if (m/^\@include\s+"(.*)"\s*$/) {
+        if (m/\A\@include\s+"(.+)"\s*\z/) {
 
             # include another conffile; a missing include is a configuration
             # error, not an optional entry
@@ -774,7 +786,12 @@ sub add_user_ignored( $self, $conffile, $required = 0 ) {
 
             # absolute filename; File::Find reports directories without a
             # trailing slash, so normalize the key before storing it
-            foreach my $filename ( glob qq("$_") ) {
+            $self->err( 1, "$conffile: invalid ignore pattern '$_'" )
+              if /[\x00-\x1f\x7f]/;
+            my @matches = bsd_glob( $_, GLOB_CSH | GLOB_LIMIT );
+            $self->err( 1, "$conffile: cannot expand ignore pattern '$_': $!" )
+              if GLOB_ERROR;
+            foreach my $filename (@matches) {
                 next if !defined($filename) || !length($filename);
                 next if $filename !~ m{^/};
                 $filename =~ s{//+}{/}g;
@@ -813,6 +830,7 @@ sub add_user_ignored( $self, $conffile, $required = 0 ) {
             $self->err( 1, "$conffile: invalid entry: $_" );
         }
     }
+    $self->err( 1, "read \"$conffile\": $!" ) if $fh->error;
     close($fh) || $self->err( 1, "close \"$conffile\": $!" );
     return 1;
 }
