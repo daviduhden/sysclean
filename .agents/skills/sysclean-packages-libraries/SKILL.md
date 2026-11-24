@@ -40,26 +40,28 @@ Do not use this skill for:
 
 ## Model and invariants
 
-* `installed_packages()` enumerates the package database selected by
-  `PKG_DBDIR`.  It is captured when the process starts.
-* `OpenBSD::PackingList->from_installation()` reads `+CONTENTS`.
+* Ordinary queries use `installed_packages()` with the database selected
+  when OpenBSD::PackageInfo loads. Apply and `-n` select the canonical host
+  database and hold a verified shared flock on its directory. BSD package
+  tooling uses the same lock protocol.
+* Read `+CONTENTS` with `OpenBSD::PackingList->read` and check the input
+  stream. Apply and preview require the PLIST name to match the database
+  entry, including synthesized `.libs-*` package names.
 * `plist_reader` passes a whitelist of annotations to the PLIST parser.
   `@cwd`, `@file`, `@lib`, `@sample`, `@bin`, `@rcscript`, `@wantlib`,
   `@newuser`, `@newgroup` and `@dir` are relevant.  An annotation that is not
   passed through is silently invisible to the inventory.
 * `FileObject`/`Cwd` add package paths and their ancestors to `{expected}`.
 * `Sampledir` adds a sample directory to `{ignored}`.
-* `Wantlib` records `library -> [packages]` in `{used_libs}`.
-* Default mode suppresses a library present in `{used_libs}` and suppresses a
-  local library that `OpenBSD::Library::is_better` considers newer than the
-  reference.
-* `-p` uses `OpenBSD::PackingList::DependOnly` and prints
-  `library<TAB>package`.
-* `-a` does not suppress used libraries in read-only output.  In apply mode,
-  `sysclean::allfiles::find_sub` refuses to queue a library whose name is in
-  `{used_libs}` and warns.  Unusual library names may not be recognized.
-* `lock_db(1)` takes a shared lock and blocks if the database is busy.  The
-  lock is not a substitute for a consistent package inventory.
+* `Wantlib` indexes OpenBSD LibSpec objects by stem with the package name
+  and its `@localbase`. `library_consumers` applies native directory and ABI
+  matching. Apply protects every compatible candidate.
+* Default mode also suppresses libraries newer than the maximum base
+  reference for the same directory and stem.
+* `-p` reads package names, local bases and wantlib declarations and prints
+  one `library<TAB>package` row per compatible consumer.
+* `-a` lists used libraries in ordinary queries. Apply and preview enforce
+  dependency protection before queueing and when checking the plan.
 
 Hard rules:
 
@@ -82,7 +84,7 @@ Hard rules:
 3. For a library, record:
    * the exact filename (`libfoo.so.M.m`);
    * the stem used by sysclean (`foo`);
-   * every package in `{used_libs}` for `foo.so.M.m`;
+   * every package returned by `library_consumers` for the exact path;
    * whether any installed package has a `+REQUIRED_BY`/`+REQUIRING` relation
      that still expects it.
 4. Check `pkg_info -W <path>` and the package's `@wantlib` entries.
@@ -101,9 +103,8 @@ Hard rules:
 1. Prefer a pass-through annotation or a walker over a hard-coded path.
 2. Add the annotation to `plist_reader` only if the parser and walker
    semantics are understood.  `@dir` is already supported; `@libset` is not.
-3. Keep the `wantlib` key format (`stem.so.major.minor`) aligned with the
-   regex used in `find_sub`.
-4. Preserve `DependOnly` behavior in package mode.
+3. Keep the stem index aligned with native `OpenBSD::LibSpec` semantics.
+4. Preserve the package local base in every mode that evaluates wantlib.
 5. On an unreadable PLIST, abort both modes.  On `partial-*`, abort apply
    mode and warn in read-only mode; do not present a complete-looking
    inventory.
@@ -147,7 +148,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

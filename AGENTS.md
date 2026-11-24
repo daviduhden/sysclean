@@ -81,8 +81,8 @@ The program flow is:
   `/var/sysmerge/etc.tgz` and package `@newuser`/`@newgroup` entries.
 * `{user_fields}`, `{group_fields}` - reference fields used to detect modified
   accounts and to refuse unsafe uid/gid changes.
-* `{used_libs}` - `@wantlib` entries mapping a library name to the packages
-  that use it.
+* `{used_libs}` - `@wantlib` specifications indexed by stem, retaining
+  package and library base for native compatibility checks.
 * `{actions}` - apply-mode plan.  Each item is an exact path, user, group or
   user modification.  Discovery and execution are separate phases.
 
@@ -106,7 +106,7 @@ recursively emptied.
   `path<TAB>package`.
 * `-a` does not filter used libraries in read-only output.  In apply mode,
   `sysclean::allfiles::find_sub` refuses to queue a library present in
-  `{used_libs}` and warns; unusual library names may not be recognized.
+  `{used_libs}` under native directory and ABI matching rules and warns.
 
 ### Accounts
 
@@ -139,7 +139,7 @@ account helper runs, the account is re-read and revalidated.
 | `-p` | Read-only package mode: prints obsolete libraries and the packages using them.  Cannot be combined with `-a` or `-x`. |
 | `-x` | Apply mode.  Loads no user ignore files, so elements listed there are removal candidates.  Hard-coded ignores remain active. |
 | `-x -i` | Apply mode **with** user ignore files loaded.  Paths matching those files, and `@user`/`@group` entries, are protected and never removed.  This is the opposite of the read-only meaning of `-i`. |
-| `-x -a` | Apply all-files.  Warns that recognized used libraries are protected from removal; unrecognized library names may not be matched to `{used_libs}`. |
+| `-x -a` | Apply all-files.  Protects recognized candidates compatible with native `@wantlib` specifications. |
 | `-x -p` | Refused. |
 | `-a -p` | Refused (usage error). |
 

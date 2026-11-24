@@ -192,14 +192,41 @@ sub init_ignored($self) {
 # after external helpers have completed; apply mode tightens it later.
 sub init($self) {
     use OpenBSD::PackageInfo;
+    use OpenBSD::Paths;
+    use OpenBSD::LibSpec;
     use OpenBSD::Pledge;
     use OpenBSD::Unveil;
+    use Errno      qw(EINTR ENOENT);
+    use Fcntl      qw(LOCK_SH O_NONBLOCK O_RDONLY S_IFMT);
+    use File::Glob qw(bsd_glob GLOB_CSH GLOB_ERROR GLOB_LIMIT);
+    use IO::Handle ();
+    use POSIX      qw(uname);
 
-    # The scan invokes helpers before a syscall ceiling can be installed.
-    # Apply mode may also invoke account helpers later; keep it unpledged
-    # during the scan and install the ceiling in prepare_apply().
-    eval { lock_db(1) };
-    $self->err( 1, "can't lock package database: $@" ) if $@;
+    if ( $self->{apply} ) {
+        my $pkgdb      = OpenBSD::Paths->pkgdb;
+        my $configured = $ENV{PKG_DBDIR};
+        $configured =~ s{(?<=.)/+\z}{} if defined($configured);
+        $self->err( 1, "apply requires the host package database '$pkgdb'" )
+          if defined($configured)
+          && length($configured)
+          && $configured ne $pkgdb;
+
+        # PackageInfo::lock_db returns undef both on success and on open
+        # failure. Lock the same directory inode using its shared protocol.
+        sysopen( my $lock, $pkgdb, O_RDONLY | O_NONBLOCK )
+          || $self->err( 1, "open package database '$pkgdb': $!" );
+        $self->err( 1, "package database '$pkgdb' is not a directory" )
+          unless -d $lock;
+        while ( !flock( $lock, LOCK_SH ) ) {
+            next if $! == EINTR;
+            $self->err( 1, "lock package database '$pkgdb': $!" );
+        }
+        $self->{package_db_lock} = $lock;
+    }
+    else {
+        eval { lock_db(1) };
+        $self->err( 1, "can't lock package database: $@" ) if $@;
+    }
 
     unveil( '/',            'r' ) || $self->err( 1, "unveil '/': $!" );
     unveil( '/dev/MAKEDEV', 'rx' )
@@ -602,7 +629,27 @@ sub add_expected_ports_info($self) {
     use OpenBSD::PackageInfo;
     use OpenBSD::PackingList;
 
-    my @packages = eval { installed_packages() };
+    my @packages = eval {
+        if ( $self->{apply} ) {
+            my $pkgdb  = OpenBSD::Paths->pkgdb;
+            my @locked = stat( $self->{package_db_lock} );
+            opendir( my $dir, $pkgdb ) or die "open '$pkgdb': $!\n";
+            my @opened = stat($dir);
+            die "package database changed after locking\n"
+              if !@locked
+              || !@opened
+              || $locked[0] != $opened[0]
+              || $locked[1] != $opened[1];
+            local $! = 0;
+            my @entries = grep { $_ ne '.' && $_ ne '..' } readdir($dir);
+            die "read '$pkgdb': $!\n" if $!;
+            closedir($dir) or die "close '$pkgdb': $!\n";
+            @entries;
+        }
+        else {
+            installed_packages();
+        }
+    };
     $self->err( 1, "can't read package database: $@" ) if $@;
     @packages = sort @packages;
 
@@ -618,9 +665,17 @@ sub add_expected_ports_info($self) {
         next if $pkgname =~ m/^partial-/;
 
         my $ok = eval {
-            my $plist = OpenBSD::PackingList->from_installation( $pkgname,
-                $self->plist_reader );
-            die "undefined packing list\n" if !defined($plist);
+            my $contents = OpenBSD::PackageInfo::installed_contents($pkgname);
+            sysopen( my $fh, $contents, O_RDONLY | O_NONBLOCK )
+              or die "open '$contents': $!\n";
+            die "'$contents' is not a regular file\n" if !-f $fh;
+            my $plist = OpenBSD::PackingList->read( $fh, $self->plist_reader );
+            die "read '$contents': $!\n" if $fh->error;
+            close($fh) or die "close '$contents': $!\n";
+            my $name = $plist->pkgname;
+            die "missing or inconsistent packing list name\n"
+              if $self->{apply} && ( !defined($name) || $name ne $pkgname );
+            local $self->{package_localbase} = $plist->localbase;
             $plist->walk_sysclean( $pkgname, $self );
             1;
         };
@@ -628,6 +683,15 @@ sub add_expected_ports_info($self) {
         $self->err( 1,
             "can't read packing list for '$pkgname': " . ( $@ || "unknown" ) )
           if !$ok;
+    }
+    if ( $self->{apply} ) {
+        my @locked  = stat( $self->{package_db_lock} );
+        my @current = stat( OpenBSD::Paths->pkgdb );
+        $self->err( 1, "package database changed during inventory" )
+          if !@locked
+          || !@current
+          || $locked[0] != $current[0]
+          || $locked[1] != $current[1];
     }
 }
 
@@ -638,16 +702,35 @@ sub add_expected_ports_info($self) {
 sub plist_reader($self) {
     return sub ( $fh, $cont ) {
         while (<$fh>) {
+            die "unterminated packing list entry\n"
+              if $self->{apply} && !/\n\z/;
 
             # Keep ordinary PLIST lines and only the annotations recognized by
             # the walker; the second match distinguishes annotations from files.
             next
               if !
-m/^\@(?:cwd|name|info|fontdir|man|mandir|file|dir|lib|shell|so|static-lib|extra|sample|bin|rcscript|wantlib|newuser|newgroup)\b/o
+m/^\@(?:cwd|name|localbase|info|fontdir|man|mandir|file|dir|lib|shell|so|static-lib|extra|sample|bin|rcscript|wantlib|newuser|newgroup)\b/o
               && m/^\@/o;
             &$cont($_);
         }
     }
+}
+
+# Index dependencies by stem, then match candidates with the same OpenBSD
+# version and directory rules used by the package tools. Every compatible
+# candidate is protected because the installed binding may be ambiguous.
+sub library_consumers( $self, $path ) {
+    return () unless $path =~ m{/lib[^/]+\.so\.[0-9]+\.[0-9]+\z};
+    my $library = OpenBSD::Library->from_string($path);
+    return () unless $library->is_valid;
+
+    my %consumers;
+    for my $record ( @{ $self->{used_libs}{ $library->stem } // [] } ) {
+        my ( $spec, $base, $package ) = @$record;
+        $consumers{$package} = 1 if $spec->match( $library, $base );
+    }
+    my @packages = sort keys %consumers;
+    return @packages;
 }
 
 # Load path and account exclusions from changelist-compatible configuration.
@@ -1063,6 +1146,8 @@ sub check_removable_path( $self, $path ) {
       if ( $path =~ m{//|/\.(?:/|$)|/$} );
     return "pathname contains a '..' component"
       if ( $path =~ m{(?:^|/)\.\.(?:/|$)} );
+    return "pathname is required by installed packages"
+      if $self->library_consumers($path);
     return "pathname is expected" if ( exists $self->{expected}{$path} );
     return "pathname is ignored"  if ( exists $self->{ignored}{$path} );
     return "pathname is inside an ignored directory"
@@ -1438,11 +1523,7 @@ sub find_sub( $self, $filename ) {
     # -a is an all-files listing, but apply mode must not remove a library
     # that an installed package still uses.  Keep the listing behavior in
     # read-only mode and refuse the removal here.
-    if (   $self->{apply}
-        && $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|
-        && $self->{used_libs}
-        && exists $self->{used_libs}{"$1$2"} )
-    {
+    if ( $self->{apply} && $self->library_consumers($filename) ) {
         $self->warning(
             "not removing library used by installed packages: $filename");
         return;
@@ -1455,9 +1536,7 @@ sub find_sub( $self, $filename ) {
 package sysclean::files;
 use parent -norequire, qw(sysclean);
 
-use OpenBSD::LibSpec;
-
-# Record base shared-library objects by stem so find_sub can compare an
+# Record base shared-library objects by directory and stem so find_sub can compare an
 # unexpected version with the reference version using OpenBSD::Library.
 sub add_expected_base_one( $self, $filename ) {
     $self->SUPER::add_expected_base_one($filename);
@@ -1466,36 +1545,23 @@ sub add_expected_base_one( $self, $filename ) {
     # major/minor components; the suffix is not part of the stem key.
     if ( $filename =~ m|/lib([^/]+)\.so\.\d+\.\d+$|o ) {
         my $lib = OpenBSD::Library->from_string($filename);
-        $self->{libs}{$1} = $lib if defined($lib);
+        if ( $lib->is_valid ) {
+            my $old = $self->{libs}{ $lib->key };
+            $self->{libs}{ $lib->key } = $lib if !$old || $lib->is_better($old);
+        }
     }
 }
 
 # Filter unexpected library paths in two stages: package consumers first,
-# then a newer local ABI version. The pattern captures the library stem and
-# numeric major/minor suffix used as the {used_libs} key.
+# then a newer local ABI version in the same directory.
 sub find_sub( $self, $filename ) {
 
-    # Capture the stem and the complete .so.major.minor suffix so this key
-    # matches the format stored by Wantlib elements.
-    if ( $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|o ) {
-
-        if ( $self->{used_libs}
-            && exists( $self->{used_libs}{"$1$2"} ) )
-        {
-
-            # skip used-libs (from ports)
-            return;
-        }
-
-        if ( $self->{libs} && exists( $self->{libs}{$1} ) ) {
-
-            # skip if file from expected is not better than current
-            my $expectedlib = $self->{libs}{$1};
-            my $currentlib  = OpenBSD::Library->from_string($filename);
-
-            if ( defined($currentlib)
-                && $currentlib->is_better($expectedlib) )
-            {
+    return if $self->library_consumers($filename);
+    if ( $filename =~ m{/lib[^/]+\.so\.[0-9]+\.[0-9]+\z} ) {
+        my $current = OpenBSD::Library->from_string($filename);
+        if ( $current->is_valid ) {
+            my $expected = $self->{libs}{ $current->key };
+            if ( $expected && $current->is_better($expected) ) {
                 $self->warning("discard better version: $filename");
                 return;
             }
@@ -1522,9 +1588,13 @@ sub add_expected_users($self) {
     # skip add_expected_users
 }
 
-# DependOnly limits package parsing to dependency annotations such as wantlib.
+# Keep the package's local base along with the library requirements.
 sub plist_reader($self) {
-    return \&OpenBSD::PackingList::DependOnly;
+    return sub ( $fh, $cont ) {
+        while (<$fh>) {
+            $cont->($_) if /^\@(?:name|localbase|wantlib)\b/;
+        }
+    };
 }
 
 # Package mode needs the filesystem candidates but does not walk accounts.
@@ -1532,18 +1602,10 @@ sub walk($self) {
     $self->walk_filesystem;
 }
 
-# Match shared-library filenames, derive the same stem/version key populated
-# by Wantlib elements, and emit one filename/package row per recorded consumer.
+# Emit one filename/package row per compatible consumer.
 sub find_sub( $self, $filename ) {
-
-    # Use the same stem/suffix split as default mode to look up package users.
-    if ( $filename =~ m|/lib([^/]*)\.so(\.\d+\.\d+)$|o ) {
-        my $wantlib = "$1$2";
-
-        for my $pkgname ( @{ ( $self->{used_libs} // {} )->{$wantlib} // [] } )
-        {
-            print( $filename, "\t", $pkgname, "\n" );
-        }
+    for my $pkgname ( $self->library_consumers($filename) ) {
+        print( $filename, "\t", $pkgname, "\n" );
     }
 }
 
@@ -1675,10 +1737,18 @@ sub walk_sysclean( $item, $pkgname, $sc ) {
 
 package OpenBSD::PackingElement::Wantlib;
 
-# Record the package consumer under the exact library key used by the scanner's
-# filename matching logic; multiple packages may append to the same array.
+# Keep the native version specification and the consumer's package local base.
 sub walk_sysclean( $item, $pkgname, $sc ) {
-    push( @{ $sc->{used_libs}{ $item->name } }, $pkgname );
+    my $spec = $item->spec;
+    my $base = $sc->{package_localbase};
+    if ( !$spec->is_valid || !defined($base) || $base !~ m{\A/} ) {
+        my $msg = "invalid library requirement in '$pkgname': " . $item->name;
+        die "$msg\n" if $sc->{apply};
+        $sc->warning($msg);
+        return;
+    }
+    $base =~ s{(?<=.)/+\z}{};
+    push @{ $sc->{used_libs}{ $spec->stem } }, [ $spec, $base, $pkgname ];
 }
 
 #

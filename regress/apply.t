@@ -252,18 +252,46 @@ subtest 'expected and ignored paths are preserved' => sub {
 subtest 'allfiles apply protects used libraries' => sub {
     my $sc = bless {
         apply     => 1,
-        used_libs => { 'c.so.1.2' => ['some-package'] },
-        actions   => [],
+        used_libs => {
+            c => [
+                [
+                    OpenBSD::LibSpec->from_string('c.1.2'), '/usr/local',
+                    'some-package'
+                ]
+            ],
+            foo => [
+                [
+                    OpenBSD::LibSpec->from_string('lib/extra/foo.1.2'),
+                    '/usr/local', 'other-package'
+                ]
+            ],
+        },
+        actions => [],
       },
       'sysclean::allfiles';
 
-    capture_both( sub { $sc->find_sub('/usr/lib/libc.so.1.2') } );
+    capture_both( sub { $sc->find_sub('/usr/lib/libc.so.1.3') } );
     is( scalar( @{ $sc->{actions} } ),
         0, 'used library is not queued in apply mode' );
 
-    capture_both( sub { $sc->find_sub('/usr/lib/libfoo.so.1.2') } );
+    my $dir    = tempdir( CLEANUP => 1 );
+    my $unused = "$dir/libfoo.so.1.2";
+    open( my $fh, '>', $unused ) or die "open $unused: $!";
+    close($fh)                   or die "close $unused: $!";
+    capture_both( sub { $sc->find_sub($unused) } );
     is( scalar( @{ $sc->{actions} } ),
         1, 'unused library is queued in apply mode' );
+
+    is_deeply( [ $sc->library_consumers('/usr/local/lib/extra/libfoo.so.1.3') ],
+        ['other-package'],
+        'qualified requirement matches the package directory' );
+    is( scalar( $sc->library_consumers('/usr/lib/libc.so.2.0') ),
+        0, 'an incompatible major version is not matched' );
+    is(
+        $sc->check_removable_path('/usr/lib/libc.so.1.3'),
+        'pathname is required by installed packages',
+        'apply rechecks library protection for exact queued paths'
+    );
 };
 
 subtest 'queue helpers' => sub {
