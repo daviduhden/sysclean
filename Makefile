@@ -77,16 +77,42 @@ release: sysclean-${VERSION}.tar.gz
 
 DISTRIBUTED_FILES = \
 	AUDIT.md \
+	LICENSE \
 	Makefile \
 	README.md \
-	regress \
+	regress/apply.t \
+	regress/stubs/OpenBSD/LibSpec.pm \
+	regress/stubs/OpenBSD/PackageInfo.pm \
+	regress/stubs/OpenBSD/PackingList.pm \
+	regress/stubs/OpenBSD/Paths.pm \
+	regress/stubs/OpenBSD/Pledge.pm \
+	regress/stubs/OpenBSD/Unveil.pm \
 	sysclean.ignore \
 	${MAN} \
 	${SCRIPT}
-	
-sysclean-${VERSION}.tar.gz: ${DISTRIBUTED_FILES}
-	chmod a+rX ${DISTRIBUTED_FILES}
-	pax -w -zf "$@" -s ',^,sysclean-${VERSION}/,' ${DISTRIBUTED_FILES}
+
+# Always snapshot the manifest from the checkout. In particular, do not
+# remake the tracked README as a side effect of creating the archive.
+.PHONY: sysclean-${VERSION}.tar.gz
+sysclean-${VERSION}.tar.gz:
+	@set -e; umask 022; tmp=$$(mktemp -d ./.sysclean-release.XXXXXXXX); \
+		trap 'rm -rf "$$tmp"' EXIT; trap 'exit 1' HUP INT TERM; \
+		stage="$$tmp/sysclean-${VERSION}"; \
+		for file in ${DISTRIBUTED_FILES}; do \
+			mkdir -p "$$stage/$$(dirname "$$file")"; \
+			cp "$$file" "$$stage/$$file"; chmod 644 "$$stage/$$file"; \
+		done; \
+		chmod 755 "$$stage/${SCRIPT}"; \
+		if [ -n "$${SOURCE_DATE_EPOCH:-}" ]; then \
+			stamp=$$(date -u -r "$$SOURCE_DATE_EPOCH" '+%Y%m%d%H%M.%S'); \
+			TZ=UTC find "$$stage" -exec touch -t "$$stamp" {} +; \
+		fi; \
+		(cd "$$tmp" && pax -wd -x ustar -f release.tar \
+			"sysclean-${VERSION}" "sysclean-${VERSION}/regress" \
+			"sysclean-${VERSION}/regress/stubs" "sysclean-${VERSION}/regress/stubs/OpenBSD" \
+			${DISTRIBUTED_FILES:S,^,sysclean-${VERSION}/,}); \
+		gzip -n -c "$$tmp/release.tar" > "$$tmp/release.tar.gz"; \
+		mv "$$tmp/release.tar.gz" "$@"
 
 .endif
 

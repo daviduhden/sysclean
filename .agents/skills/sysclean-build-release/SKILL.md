@@ -48,12 +48,14 @@ Do not use this skill for:
 * `regress` runs syntax, apply unit tests, man lint, README sync and man date.
 * `release` is conditional on `VERSION`:
   * undefined: prints an error and fails;
-  * defined: builds `sysclean-${VERSION}.tar.gz` from
-    `DISTRIBUTED_FILES` using `chmod a+rX` and `pax`.
-* `DISTRIBUTED_FILES` currently includes `AUDIT.md`, `Makefile`,
-  `README.md`, `regress`, `sysclean.ignore`, `sysclean.8` and
-  `sysclean.pl`.  The non-destructive `regress/` tests are included so that
-  `make regress` is usable from a release tarball.
+  * defined: stages the explicit `DISTRIBUTED_FILES` manifest and builds
+    `sysclean-${VERSION}.tar.gz` using `pax` and `gzip -n`. Staging uses
+    mode 0755 for the executable and 0644 for distribution data.
+* `DISTRIBUTED_FILES` includes `LICENSE` and explicitly lists each portable
+  fixture required by `make regress`. Add new distributed files here.
+* Set `SOURCE_DATE_EPOCH` to normalize staged file and directory timestamps.
+  Reproducing checksums also requires matching source, ownership metadata,
+  and toolchain.
 
 Hard rules:
 
@@ -76,7 +78,7 @@ Hard rules:
 4. Check `DESTDIR` use: only the script install is staged; the man page comes
    from `bsd.prog.mk`.
 5. Check permissions and owners: `${BINOWN}`, `${BINGRP}`, `${BINMODE}`,
-   `chmod a+rX` for distributed files.
+   and the files' modes in the archive staging directory.
 6. Check versioning: `VERSION` must be explicit; no date-based or implicit
    version.
 7. Check the port: `sysutils/sysclean` may expect a specific install layout,
@@ -103,7 +105,7 @@ Hard rules:
 * inspect the tarball with `pax -f`/`tar -tzf`:
   * top-level `sysclean-<version>/`
   * `Makefile`, `README.md`, `sysclean.ignore`, `sysclean.8`,
-    `sysclean.pl`, `AUDIT.md`
+    `sysclean.pl`, `AUDIT.md`, `LICENSE`
   * `regress/apply.t` and `regress/stubs/` (non-destructive tests)
   * no build artifacts, temporary files or test residue
 * `git diff --check`
@@ -135,7 +137,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered
