@@ -17,6 +17,43 @@ use lib "$FindBin::Bin/stubs";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 
+# Install optional account fixture readers before compiling sysclean.pl.
+# Tests using these readers never query or modify host account records.
+our ( $fixture_users, $fixture_user_index, $fixture_groups );
+
+BEGIN {
+    no warnings 'once';
+    *CORE::GLOBAL::getpwent = sub {
+        return CORE::getpwent() unless defined $fixture_users;
+        return () if $fixture_user_index >= @$fixture_users;
+        return @{ $fixture_users->[ $fixture_user_index++ ] };
+    };
+    *CORE::GLOBAL::setpwent = sub {
+        return CORE::setpwent() unless defined $fixture_users;
+        $fixture_user_index = 0;
+    };
+    *CORE::GLOBAL::endpwent = sub {
+        return CORE::endpwent() unless defined $fixture_users;
+        $fixture_user_index = 0;
+    };
+    *CORE::GLOBAL::getpwnam = sub {
+        return CORE::getpwnam( $_[0] ) unless defined $fixture_users;
+        my ($entry) = grep { $_->[0] eq $_[0] } @$fixture_users;
+        return $entry ? @$entry : ();
+    };
+    *CORE::GLOBAL::getgrnam = sub {
+        return CORE::getgrnam( $_[0] ) unless defined $fixture_groups;
+        my ($entry) = grep { $_->[0] eq $_[0] } @$fixture_groups;
+        return $entry ? @$entry : ();
+    };
+    *CORE::GLOBAL::getgrgid = sub {
+        return CORE::getgrgid( $_[0] ) unless defined $fixture_groups;
+        my ($entry) = grep { $_->[2] == $_[0] } @$fixture_groups;
+        return () unless $entry;
+        return wantarray ? @$entry : $entry->[0];
+    };
+}
+
 # loading the script must not execute the main program
 ## no critic (Modules::RequireBarewordIncludes) -- FindBin keeps this isolated test independent of the caller's working directory.
 require "$FindBin::Bin/../sysclean.pl";
@@ -227,7 +264,7 @@ subtest 'remove_path' => sub {
     open( $fh, '>', "$full/child" ) or die "open child: $!";
     close($fh);
 
-    my ( $out, $err ) = capture_both( sub { $sc->remove_path($full) } );
+    my ( undef, $err ) = capture_both( sub { $sc->remove_path($full) } );
     ok( -d $full, 'non-empty directory is preserved' );
     like( $err, qr/rmdir/, 'failure is warned about' );
 };
@@ -317,15 +354,18 @@ subtest 'queue helpers' => sub {
     $ro->queue_path('/x');
     $ro->queue_user( 'foo', 500 );
     $ro->queue_group( 'foo', 500 );
-    $ro->queue_user_mod( 'foo', 500, '-s', '/sbin/nologin' );
+    $ro->queue_user_mod( 'foo', 500, 500, 'foo', '', '/var/empty', '/bin/ksh' );
     is( scalar( @{ $ro->{actions} } ),
         0, 'no action queued outside apply mode' );
 
-    my $rw = new_sysclean( apply => 1 );
-    $rw->queue_path('/x');
+    my $rw = new_sysclean(
+        apply       => 1,
+        user_fields => { foo => { uid => 500, shell => '/sbin/nologin' } }
+    );
+    $rw->queue_path($0);
     $rw->queue_user( 'foo', 500 );
     $rw->queue_group( 'foo', 500 );
-    $rw->queue_user_mod( 'foo', 500, '-s', '/sbin/nologin' );
+    $rw->queue_user_mod( 'foo', 500, 500, 'foo', '', '/var/empty', '/bin/ksh' );
 
     is( scalar( @{ $rw->{actions} } ), 4,   'actions queued in apply mode' );
     is( $rw->{actions}[1]{uid},        500, 'user uid is recorded' );
@@ -384,7 +424,7 @@ subtest 'apply integration' => sub {
     open( my $fh, '>', $file ) or die "open $file: $!";
     close($fh);
 
-    $sc->{actions} = [ { type => 'path', name => $file } ];
+    $sc->queue_path($file);
 
     @OpenBSD::Unveil::UNVEILS  = ();
     $OpenBSD::Unveil::LOCKED   = 0;
@@ -410,7 +450,7 @@ subtest 'apply refuses an expected path' => sub {
     close($fh);
 
     $sc->{expected}{$file} = 1;
-    $sc->{actions} = [ { type => 'path', name => $file } ];
+    $sc->queue_path($file);
 
     @OpenBSD::Unveil::UNVEILS  = ();
     $OpenBSD::Unveil::LOCKED   = 0;
@@ -422,6 +462,142 @@ subtest 'apply refuses an expected path' => sub {
     ok( -e $file, 'expected file is preserved' );
     is( $rc,                    1, 'apply reports failure' );
     is( $sc->{removed}{failed}, 1, 'refusal is counted' );
+};
+
+subtest 'preview leaves the sandbox and filesystem unchanged' => sub {
+    my $dir  = tempdir( CLEANUP => 1 );
+    my $file = "$dir/obsolete";
+    my $sc   = new_sysclean();
+    $sc->{preview} = 1;
+    plan skip_all => 'temporary directory has a symlinked ancestor'
+      if $sc->path_has_symlink_ancestor($file);
+    open my $fh, '>', $file or die "open $file: $!";
+    close $fh or die "close $file: $!";
+    $sc->queue_path($file);
+    local @OpenBSD::Unveil::UNVEILS;
+    local @OpenBSD::Pledge::PROMISES;
+    my $status;
+    my ($out) = capture_both( sub { $status = $sc->apply } );
+    is( $status, 0, 'clean preview' );
+    like( $out, qr/planned removal/, 'reports apply candidate' );
+    ok( -f $file, 'preview keeps candidate' );
+    is( scalar @OpenBSD::Unveil::UNVEILS,
+        0, 'preview requests no unveil grants' );
+    is( scalar @OpenBSD::Pledge::PROMISES,
+        0, 'preview requests no apply promises' );
+};
+
+subtest 'path identity is rechecked' => sub {
+    my $dir  = tempdir( CLEANUP => 1 );
+    my $file = "$dir/obsolete";
+    my $sc   = new_sysclean();
+    plan skip_all => 'temporary directory has a symlinked ancestor'
+      if $sc->path_has_symlink_ancestor($file);
+    open my $fh, '>', $file or die "open $file: $!";
+    close $fh or die "close $file: $!";
+    $sc->queue_path($file);
+    rename $file, "$dir/original" or die "rename $file: $!";
+    open $fh, '>', $file or die "open $file: $!";
+    close $fh or die "close $file: $!";
+    my ( $rc, $err );
+    ( undef, $err ) = capture_both( sub { $rc = $sc->apply } );
+    is( $rc, 1, 'drift reported' );
+    like( $err, qr/identity changed/, 'diagnoses replacement' );
+    ok( -f $file && -f "$dir/original", 'both identities remain' );
+};
+
+subtest 'top-level preflight never reaches write grants' => sub {
+    my $sc = new_sysclean();
+    my $error;
+    {
+        no warnings qw(redefine once);
+        local *sysclean::err = sub { die $_[2] };
+        eval { $sc->preflight_paths( [ { name => '/fixture' } ] ); };
+        $error = $@;
+    }
+    like( $error, qr/top-level candidate/, 'top-level path aborts preflight' );
+};
+
+subtest 'package account defaults and enforced fields' => sub {
+    my $sc    = new_sysclean();
+    my $entry = bless {
+        name  => '_fixture',
+        uid   => '!550',
+        group => '123',
+        class => 'local-default',
+        home  => '!/var/empty',
+        shell => '/bin/ksh',
+      },
+      'OpenBSD::PackingElement::NewUser';
+    $entry->walk_sysclean( 'package-a', $sc );
+    my $ref = $sc->{user_fields}{_fixture};
+    is( $ref->{uid},  550,          'reference uid retained' );
+    is( $ref->{home}, '/var/empty', 'enforced field retained' );
+    ok( !exists $ref->{gid} && !exists $ref->{shell} && !exists $ref->{class},
+        'unmarked defaults do not authorize correction' );
+    $sc->register_user_reference( '_fixture', { uid => 551 }, 'package-b' );
+    ok( $ref->{ambiguous}, 'conflicting reference is ambiguous' );
+    is_deeply(
+        $ref->{sources},
+        [ 'package-a', 'package-b' ],
+        'sources retained'
+    );
+};
+
+subtest 'group dependency checks include non-system users' => sub {
+    local $fixture_users =
+      [ [ 'root', '*', 0, 0 ], [ 'retained', '*', 1001, 550 ], ];
+    like(
+        sysclean::primary_group_dependency(550),
+        qr/primary group of 'retained'/,
+        'retained user blocks group deletion'
+    );
+    is( scalar sysclean::primary_group_dependency(551),
+        undef, 'unused gid passes' );
+    local $fixture_users = [];
+    like(
+        sysclean::primary_group_dependency(551),
+        qr/root account missing/,
+        'empty enumeration cannot establish safety'
+    );
+};
+
+subtest 'usermod refuses drift and changed group resolution' => sub {
+    local $fixture_users =
+      [ [ 'fixture', '*', 550, 550, undef, '', '', '/var/empty', '/bin/ksh' ],
+      ];
+    local $fixture_groups =
+      [ [ 'original', '*', 550, '' ], [ 'destination', '*', 551, '' ], ];
+    my $sc = new_sysclean(
+        user_fields => { fixture => { uid => 550, group => 'destination' } } );
+    $sc->queue_user_mod( 'fixture', 550, 550, 'original', '', '/var/empty',
+        '/bin/ksh' );
+    my $action = $sc->{actions}[0];
+    is( scalar $sc->user_mod_refusal($action),
+        undef, 'matching snapshot is eligible' );
+    $fixture_users->[0][8] = '/sbin/nologin';
+    like(
+        $sc->user_mod_refusal($action),
+        qr/account fields changed/,
+        'local drift refused'
+    );
+    $fixture_users->[0][8]  = '/bin/ksh';
+    $fixture_groups->[1][2] = 552;
+    like(
+        $sc->user_mod_refusal($action),
+        qr/destination group changed/,
+        'target drift refused'
+    );
+    $sc->{user_fields}{fixture}{gid} = 551;
+    like(
+        $sc->user_mod_refusal($action),
+        qr/group name and gid disagree/,
+        'contradictory references refused'
+    );
+    ok(
+        !sysclean::valid_usermod_args( '-g', '=uid' ),
+        'special group creation form refused'
+    );
 };
 
 done_testing();

@@ -65,8 +65,9 @@ The program flow is:
    the base inventory, then the account and package inventory.  Read-only
    mode installs its `pledge(2)` ceiling after external helpers finish.
 4. `walk()` scans users, groups and the filesystem.
-5. In apply mode only, `apply()` deduplicates the recorded actions, validates
-   them, tightens the sandbox, removes/updates elements and reports failures.
+5. `-n` and `-x` use the same plan selection and path preflight. Preview
+   reports the plan under a read-only pledge. Apply tightens the sandbox,
+   removes or updates elements, and reports outcomes.
 
 ### Inventory representation
 
@@ -119,12 +120,15 @@ without `-r`, so home directories are preserved.
 
 If a name exists in the reference but the current uid (or gid) differs, the
 account is reported but not removed or modified.  Immediately before an
-account helper runs, the account is re-read and revalidated.
+account helper runs, the account is re-read and revalidated. Only required
+package fields can authorize an update. Conflicting references protect the
+account. Group deletion checks live primary GIDs after user changes.
 
 ### Analysis, report and apply
 
 * Analysis/read-only: `sysclean`, `sysclean -i`, `sysclean -a`,
-  `sysclean -p`.  No system modification.
+  `sysclean -p` and `sysclean -n`. Preview accepts the same `-a` and `-i`
+  flags as apply without granting write permissions.
 * Report: stdout lists paths, `@user` and `@group` lines; warnings go to
   stderr with `[WARN]`.
 * Apply: only `sysclean -x` (optionally `-a` or `-i`).  `-x -p` is refused.
@@ -136,7 +140,8 @@ account helper runs, the account is re-read and revalidated.
 | no options | Read-only.  Lists obsolete paths, users and groups.  Loads user ignore files (`/etc/changelist`, `/etc/sysclean.ignore`) and hides ignored elements. Excludes libraries used by packages. |
 | `-i` | Read-only "include ignored": does **not** load the user ignore files, so ignored elements are listed.  Hard-coded ignores remain active. |
 | `-a` | Read-only all-files: reports used libraries too.  Cannot be combined with `-p`. |
-| `-p` | Read-only package mode: prints obsolete libraries and the packages using them.  Cannot be combined with `-a` or `-x`. |
+| `-p` | Read-only package mode: prints obsolete libraries and the packages using them.  Cannot be combined with `-a`, `-n` or `-x`. |
+| `-n` | Read-only preview using the same flags and selection as apply. Incompatible with `-x` and `-p`. |
 | `-x` | Apply mode.  Loads no user ignore files, so elements listed there are removal candidates.  Hard-coded ignores remain active. |
 | `-x -i` | Apply mode **with** user ignore files loaded.  Paths matching those files, and `@user`/`@group` entries, are protected and never removed.  This is the opposite of the read-only meaning of `-i`. |
 | `-x -a` | Apply all-files.  Protects recognized candidates compatible with native `@wantlib` specifications. |
@@ -149,7 +154,7 @@ in `create()`.  Do not "simplify" it without preserving this contract.
 
 ## Fundamental invariants
 
-1. The default mode is strictly read-only.
+1. The default mode and `-n` preview are strictly read-only.
 2. No system modification happens without an explicit `-x`.
 3. Only elements selected by the authorized detection procedures may be
    modified.
@@ -173,10 +178,10 @@ Additional implementation rules:
   the action list.
 * A known account name with a different uid/gid is never treated as an
   obsolete account.
-* Reference-inventory failures are fail-closed in apply mode: empty/failed
-  `locate`, failed `rcctl`, missing/empty `etc.tgz` members, unreadable
-  package PLISTs, `partial-*` packages and missing account helpers abort
-  before removal.
+* Preview and apply require a verified shared lock on the host package
+  database, validate locate release tags and basic account reference records,
+  and refuse failed inventory sources or traversal. Missing required account
+  helpers abort apply before removal.
 * Apply mode exits with status 1 if any requested removal or account update
   fails.
 
@@ -436,9 +441,10 @@ Use the specialized skill when the task matches its description:
 ## Known limitations
 
 `AUDIT.md` is authoritative.  In particular: a TOCTOU window remains between
-validation and removal; a top-level path requires `unveil("/", "rwc")`; the
+validation and removal; a top-level candidate aborts preview or apply before
+mutation because the read-only root unveil cannot gain permissions; the
 `rwc` grant covers the whole parent directory; account helper children are
 not confined by the parent's pledge/unveil; stale or incomplete reference
-data can still produce false positives; `-x -a` protects only libraries whose
-names match `{used_libs}`; ignore globs are expanded at load time; and
+data can still produce false positives; `-x -a` protects only libraries that match the native package specifications in
+`{used_libs}`; ignore globs are expanded at load time; and
 `PKG_DBDIR`/`DESTDIR` do not isolate the host root.

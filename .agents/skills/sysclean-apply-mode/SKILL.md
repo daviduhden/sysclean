@@ -43,12 +43,12 @@ Do not use this skill for:
 Apply mode is a two-phase design:
 
 1. **Discovery.**  The normal scan records exact actions:
-   `{type => 'path', name => ...}`, `{type => 'user', name => ..., uid => ...}`,
+   `{type => 'path', name => ..., identity => [...]}`, `{type => 'user', name => ..., uid => ...}`,
    `{type => 'group', name => ..., gid => ...}` or
    `{type => 'user_mod', name => ..., uid => ..., opts => [...]}`.
-2. **Application.**  `apply()` deduplicates actions, `prepare_apply()` validates
-   and tightens the sandbox, then paths are removed deepest-first, followed by
-   user/group deletion and user modifications.
+2. **Preflight and application.** `apply()` deduplicates and preflights.
+   Preview terminates after printing. Apply tightens the sandbox and removes
+   paths deepest-first, deletes users, modifies users, then checks groups.
 
 There is no re-scan and no glob expansion in the application phase.  This
 separation is mandatory.  Do not move detection into `remove_path`.
@@ -67,8 +67,9 @@ separation is mandatory.  Do not move detection into `remove_path`.
 * paths inside an ignored directory;
 * paths with a symlinked ancestor.
 
-`prepare_apply` applies this check **before** unveiling parent directories.
-`remove_path` rechecks immediately before `lstat`.  The final component may
+`preflight_paths` applies this check and checks the recorded identity
+**before** unveiling parent directories. `remove_path` repeats validation
+and compares the final component with its recorded device, inode and type.  The final component may
 be a symlink; it is unlinked, never followed.  Directories are removed with
 `rmdir` only, never recursively.
 
@@ -90,15 +91,14 @@ the intended way to distinguish a directory from a symlink-to-directory.
 
 * A TOCTOU window remains between validation and `unlink`/`rmdir`.  A
   symlinked ancestor is checked, but the check and operation are not atomic.
-* A top-level target requires `unveil("/", "rwc")`, which widens the write
-  view for the rest of the run.
+* A top-level candidate aborts preflight before write grants. OpenBSD
+  rejects increasing the permissions of the existing read-only root rule.
 * `rwc` on a parent grants write access to every entry in that directory, not
   only the selected path.
 * Account helpers run as children outside the parent's pledge/unveil.
 * A stale/incomplete reference inventory can still produce a false positive.
-* `-x -a` protects libraries whose names match `{used_libs}`, but unusual
-  library names or incomplete `@wantlib` metadata can leave a used library
-  unprotected.
+* `-x -a` uses native `@wantlib` compatibility both during selection and
+  path validation. Unusual names and incomplete metadata remain limitations.
 * There is no transaction, backup or rollback.
 
 ## Analysis procedure
@@ -196,7 +196,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

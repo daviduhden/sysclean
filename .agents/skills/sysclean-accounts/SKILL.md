@@ -59,7 +59,8 @@ Do not use this skill for:
   deleting a new account that reused an old name.
 * `@user`/`@group` entries protect by full key and by name, so a field change
   does not silently defeat the ignore.
-* `userdel` is called without `-r`; home directories are preserved.
+* `userdel` is called without `-r`; home directories are preserved. Check
+  the postcondition and report accounts kept disabled by local policy.
 * `usermod -d` changes the recorded home path but does not move files.
 
 Hard rules:
@@ -69,10 +70,12 @@ Hard rules:
 * Pass arguments as a list to `system`; never use a shell string.
 * Validate `usermod` option/value pairs: only `-g`, `-L`, `-d`, `-s`;
   reject control characters and values starting with `-`; reject empty
-  `-g`/`-d`.
+  `-g`/`-d`. Resolve group arguments by name before falling back to numeric
+  GID and refuse special arguments such as `=uid`.
 * Re-read the account immediately before the helper runs.  Refuse if it no
-  longer exists, if its uid/gid changed from the queued value, if it is now
-  expected, or if it is now ignored.
+  longer exists, if its uid/gid changed from the queued value, or if an ignore
+  rule applies. Deletion refuses expected accounts. Modification requires
+  a matching reference and verifies live field values and destination GID.
 * Do not modify `/etc/master.passwd`, `/etc/group` or the account databases
   for testing.  Do not test on real host accounts.
 
@@ -81,16 +84,16 @@ Hard rules:
 1. Determine whether the account is in the base reference, package reference,
    both, or neither.  Check `/var/sysmerge/etc.tgz` members and package
    `@newuser`/`@newgroup`.
-2. Strip a leading `!` from package account fields before comparing; `!`
-   marks a value that must not be changed.
+2. Preserve the required-field bit when stripping a leading `!`. Unmarked
+   package defaults cannot authorize a change to an existing account.
 3. Build the full and `name:uid`/`name:gid` keys exactly as the code does.
 4. Check ignore entries by full key and by name.
 5. Check modified-user fields.  Do not treat a missing field as a difference.
 6. Check uid/gid mismatch before the obsolete branch.
 7. In apply mode, trace the action's uid/gid into the helper and verify the
    revalidation in `check_removable_user`/`check_removable_group`.
-8. Check ordering: paths, users, groups, then user modifications.  A group
-   deletion after user deletion is intentional.
+8. Order paths, user removals, user modifications, then groups. Recheck primary
+   GIDs across all users, including UID >= 1000 and retained users.
 9. Check that a failed helper increments the failure counter and that the
    run exits 1.
 
@@ -100,7 +103,9 @@ Hard rules:
    protection.
 2. Do not add a deletion path for a name that exists in the reference with a
    different uid/gid.  Report it instead.
-3. Keep `pkg_account_value` stripping of `!` markers.
+3. Merge authorized references by field and keep their source. Refuse
+   conflicting identities and group requirements, including a name that
+   resolves to a different required numeric GID.
 4. Add any new helper option to `valid_usermod_args` and to the allowlist.
 5. Keep `userdel` without `-r`.
 6. Revalidate immediately before every helper call.
@@ -152,7 +157,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

@@ -48,19 +48,23 @@ Do not use this skill for:
 5. It builds account and package inventory under the ceiling.
 6. The scan runs under `rpath getpw stdio`.
 
+Preview (`-n`) uses apply-selection policy but the read-only pledge. It
+terminates after preflight and never enters `prepare_apply()`.
+
 ### Apply mode
 
 1. The scan runs unpledged; the initial unveil view is read-only.
 2. `apply()` collects and deduplicates actions.
-3. `prepare_apply()` validates every path and drops refused paths **before**
-   granting write permission.
+3. `preflight_paths()` validates identities and rejects top-level candidates
+   before `prepare_apply()` can grant any write permission.
 4. It unveils each remaining parent directory with `rwc`.
 5. It checks and unveils only the account helpers needed: `userdel`,
    `groupdel` and/or `usermod`, each `rx`.
 6. It calls `unveil()` to lock the view.
 7. It pledges `rpath wpath cpath getpw`, adding `proc exec` when any account
    helper must run.  `stdio` is implicit.
-8. Paths are removed, then users/groups, then user modifications.
+8. Paths are removed, then users are deleted or modified, then groups are
+   checked against the remaining accounts before deletion.
 
 A failure of a parent-directory unveil, the unveil lock or the final pledge
 aborts before removal.  A missing required account helper is also fatal before
@@ -83,7 +87,6 @@ Not guaranteed:
 * That account helper children are confined.  No `execpromises` are
   installed; `execve` gives the child an unpledged, unveiled start.  The
   parent retains its pledge/unveil restrictions.
-* That a top-level removal avoids `unveil("/", "rwc")`.
 * That `rwc` is narrower than the parent directory; it grants write access to
   every entry in that directory.
 * That the unveil vnode limit is never reached in a large run.
@@ -98,7 +101,8 @@ claim the children inherit the parent's sandbox.
   analysis and security review.
 * Do not remove `unveil()` locking.
 * Do not add write permission before path validation.
-* Do not add `rwc` to `/` unless the top-level removal case requires it.
+* Keep the root read-only. A top-level candidate is outside the current
+  write policy and aborts preflight.
 * Do not use `execpromises` as a casual isolation mechanism.  It changes the
   helper's inherited promise set and can break legitimate `userdel`,
   `groupdel` or `usermod` behavior.  Justify it exhaustively and test it in a
@@ -162,7 +166,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

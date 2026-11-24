@@ -46,7 +46,9 @@ sub subclass( $self, $options ) {
 # participate, and construct the selected scanner. In apply mode, -i means
 # honor those files; in read-only mode it means omit them.
 sub create( $base, $options ) {
-    my $apply      = defined $$options{x};
+    my $preview = defined $$options{n};
+    my $apply   = $preview || defined $$options{x};
+    sysclean->usage if $preview && defined $$options{x};
     my $mode_count = 0;
 
     $mode_count++   if ( defined $$options{a} );
@@ -54,7 +56,8 @@ sub create( $base, $options ) {
     sysclean->usage if ( $mode_count > 1 );
 
     # applying changes only makes sense for the file listings
-    sysclean->err( 1, "-x is not compatible with package mode (-p)" )
+    sysclean->err( 1,
+        "apply and preview are incompatible with package mode (-p)" )
       if ( $apply && defined $$options{p} );
 
     # in apply mode, -i selects whether the user ignore files are honored:
@@ -63,31 +66,33 @@ sub create( $base, $options ) {
     my $with_ignored = $apply ? defined $$options{i} : !defined $$options{i};
 
     sysclean->warning(
-        "-x: user ignore files are not protected, use -i to respect them")
+        "local exclusions are inactive for this plan; use -i to honor them")
       if ( $apply && !defined $$options{i} );
 
     sysclean->warning(
-        "-x with -a: recognized used libraries are protected from removal")
-      if ( $apply && defined $$options{a} );
+"all-files plan protects libraries matched to installed package requirements"
+    ) if ( $apply && defined $$options{a} );
 
-    return $base->subclass($options)->new( $with_ignored, $apply );
+    return $base->subclass($options)->new( $with_ignored, $apply, $preview );
 }
 
 # Initialize all inventories and apply counters before loading references.
 # The hashes are sets keyed by exact path/account forms; actions are deferred
 # until the scan has completed so discovery remains separate from mutation.
-sub new( $class, $with_ignored, $apply ) {
+sub new( $class, $with_ignored, $apply, $preview = 0 ) {
     my $self = bless {}, $class;
 
     $self->{apply}   = $apply ? 1 : 0;
+    $self->{preview} = $preview;
     $self->{actions} = [];
     $self->{removed} = {
-        files    => 0,
-        dirs     => 0,
-        users    => 0,
-        groups   => 0,
-        modified => 0,
-        failed   => 0,
+        files     => 0,
+        dirs      => 0,
+        users     => 0,
+        groups    => 0,
+        modified  => 0,
+        preserved => 0,
+        failed    => 0,
     };
 
     # initialise the inventories explicitly so that exists() checks do not
@@ -126,7 +131,7 @@ sub new( $class, $with_ignored, $apply ) {
 
 # Print the accepted option shape and exit with a usage failure.
 sub usage($self) {
-    print "usage: $0 [ -a | -p ] [-i] [-x]\n";
+    print "usage: $0 [-a | -p] [-i]\n       $0 [-a] [-i] (-n | -x)\n";
     exit 1;
 }
 
@@ -242,7 +247,7 @@ sub init($self) {
 
     # Read-only mode has finished all external execution.
     pledge("rpath getpw") || $self->err( 1, "pledge" )
-      unless $self->{apply};
+      if !$self->{apply}  || $self->{preview};
 
     $self->add_expected_users;
     $self->add_expected_ports_info;
@@ -582,21 +587,27 @@ sub add_expected_users($self) {
     $self->err( 1, "missing ./etc/group in /var/sysmerge/etc.tgz" )
       if !defined($group) || !length($group);
 
-    foreach my $entry ( grep { length } split( /\n/, $group ) ) {
-        my ( $name, $passwd, $gid, $members ) = split( /:/, $entry, -1 );
+    foreach my $entry ( grep { length && !/\A#/ } split( /\n/, $group ) ) {
+        my @fields = split( /:/, $entry, -1 );
+        my ( $name, $passwd, $gid, $members ) = @fields;
+        $self->err( 1, "incomplete group record in etc.tgz" )
+          if $self->{apply}
+          && ( @fields != 4 || !length($name) || !length($gid) );
         next if !defined($name) || !length($name);
         next if !defined($gid)  || !length($gid);
         $self->err( 1, "invalid gid for group '$name' in etc.tgz" )
           if $gid !~ m{^\d+$};
         my $group_key = join( ':', ( $name, $gid ) );
 
-        $groups{$gid}                = $name;
-        $self->{groups}{$group_key}  = 1;
-        $self->{group_fields}{$name} = $gid;
+        $groups{$gid} = $name;
+        $self->{groups}{$group_key} = 1;
+        $self->register_group_reference( $name, $gid, 'sysmerge' );
         $group_entries++;
     }
     $self->err( 1, "empty ./etc/group in /var/sysmerge/etc.tgz" )
       if $group_entries == 0;
+    $self->err( 1, "missing wheel:0 in etc.tgz" )
+      if $self->{apply} && !exists( $self->{groups}{'wheel:0'} );
 
     # Store a full comparison key plus name:uid. The short key distinguishes a
     # modified account from an account absent from the reference altogether.
@@ -607,11 +618,17 @@ sub add_expected_users($self) {
     $self->err( 1, "missing ./etc/master.passwd in /var/sysmerge/etc.tgz" )
       if !defined($passwd_content) || !length($passwd_content);
 
-    foreach my $entry ( grep { length } split( /\n/, $passwd_content ) ) {
+    foreach
+      my $entry ( grep { length && !/\A#/ } split( /\n/, $passwd_content ) )
+    {
+        my @fields = split( /:/, $entry, -1 );
         my (
             $name,   $passwd, $uid,   $gid,  $class,
             $change, $expire, $gecos, $home, $shell
-        ) = split( /:/, $entry, -1 );
+        ) = @fields;
+        $self->err( 1, "incomplete user record in etc.tgz" )
+          if $self->{apply}
+          && ( @fields != 10 || !length($name) || !length($uid) );
         next if !defined($name) || !length($name);
         next if !defined($uid)  || !length($uid);
         $self->err( 1, "invalid uid for user '$name' in etc.tgz" )
@@ -628,14 +645,17 @@ sub add_expected_users($self) {
               ( $name, $uid, $gname, $class, $home, $shell ) );
         $self->{users}{$user} = 1;
 
-        $self->{user_fields}{$name} = {
-            uid   => $uid,
-            gid   => $gid,
-            group => $gname,
-            class => $class,
-            home  => $home,
-            shell => $shell,
-        };
+        $self->register_user_reference(
+            $name,
+            {
+                uid   => $uid,
+                gid   => $gid,
+                class => $class,
+                home  => $home,
+                shell => $shell
+            },
+            'sysmerge'
+        );
 
         my $short = join( ':', ( $name, $uid ) );
         $self->{users}{$short} = 1;
@@ -643,6 +663,8 @@ sub add_expected_users($self) {
     }
     $self->err( 1, "empty ./etc/master.passwd in /var/sysmerge/etc.tgz" )
       if $passwd_entries == 0;
+    $self->err( 1, "missing root:0 in etc.tgz" )
+      if $self->{apply} && !exists( $self->{users}{'root:0'} );
 
 }
 
@@ -865,6 +887,10 @@ sub add_user_ignored( $self, $conffile, $required = 0 ) {
 sub walk_filesystem($self) {
     use File::Find;
 
+    local $SIG{__WARN__} = sub {
+        $self->err( 1, "incomplete filesystem scan: $_[0]" ) if $self->{apply};
+        $self->warning( $_[0] );
+    };
     find(
         {
             wanted => sub {
@@ -874,18 +900,18 @@ sub walk_filesystem($self) {
                     $File::Find::prune = 1;
 
                 }
-                elsif ( !exists( $self->{expected}{$_} ) ) {
-
-                    # not expected file
-
-                    if ( -d $_ ) {
-
-                        # don't descend in unknown directory
-                        $File::Find::prune = 1;
+                else {
+                    return if !$self->{apply} && exists $self->{expected}{$_};
+                    my @entry = lstat($_);
+                    if ( !@entry ) {
+                        my $msg = "lstat '$_': $!";
+                        $self->err( 1, $msg ) if $self->{apply};
+                        $self->warning($msg);
+                        return;
                     }
-
-                    # find_sub is defined per mode
-                    $self->find_sub($_);
+                    return                 if exists $self->{expected}{$_};
+                    $File::Find::prune = 1 if -d _;
+                    $self->find_sub( $_, \@entry );
                 }
             },
             follow   => 0,
@@ -893,6 +919,33 @@ sub walk_filesystem($self) {
         },
         '/'
     );
+}
+
+# Merge only authoritative fields. Any disagreement persists for the entire
+# scan and protects this name even when one reference matches the live UID.
+sub register_user_reference( $self, $name, $fields, $source ) {
+    my $ref = $self->{user_fields}{$name} //= {};
+    push @{ $ref->{sources} }, $source;
+    for my $key (qw(uid gid group class home shell)) {
+        next unless defined $fields->{$key};
+        if ( defined $ref->{$key} && $ref->{$key} ne $fields->{$key} ) {
+            $ref->{ambiguous} = 1;
+        }
+        else {
+            $ref->{$key} = $fields->{$key};
+        }
+    }
+}
+
+sub register_group_reference( $self, $name, $gid, $source ) {
+    push @{ $self->{group_sources}{$name} }, $source;
+    if (   defined $gid
+        && defined $self->{group_fields}{$name}
+        && $gid != $self->{group_fields}{$name} )
+    {
+        $self->{ambiguous_groups}{$name} = 1;
+    }
+    $self->{group_fields}{$name} //= $gid;
 }
 
 # Compare system accounts below uid 1000 with the reference and ignore sets.
@@ -931,20 +984,34 @@ sub walk_users($self) {
           || exists( $self->{ignored_users}{$short} )
           || exists( $self->{ignored_user_names}{$name} );
 
-        # expected as-is, checking both key forms used by @newuser
-        next
-          if exists( $self->{users}{$user} )
-          || exists( $self->{users}{$user_gid} );
+        my $uf = $self->{user_fields}{$name};
+        if (
+            $uf
+            && (
+                $uf->{ambiguous}
+                || (   defined $uf->{gid}
+                    && defined $uf->{group}
+                    && ( account_group_id( $uf->{group} ) // -1 ) !=
+                    $uf->{gid} )
+            )
+          )
+        {
+            $self->warning( "conflicting references for user '$name': "
+                  . join( ', ', @{ $uf->{sources} } ) );
+            $self->{removed}{failed}++ if $self->{apply};
+            next;
+        }
 
-        if ( exists( $self->{users}{$short} ) ) {
+        if ( $uf && defined $uf->{uid} && $uid == $uf->{uid} ) {
 
             # user exists, but it seems modified, compare fields
             my @changed = ();
-            my $uf      = $self->{user_fields}{$name} // {};
             push @changed, "gid is $gid, should be $uf->{gid}"
               if ( defined $uf->{gid} and $gid != $uf->{gid} );
             push @changed, "group is $gname, should be $uf->{group}"
-              if ( defined $uf->{group} and $gname ne $uf->{group} );
+              if !defined $uf->{gid}
+              && defined $uf->{group}
+              && ( account_group_id( $uf->{group} ) // -1 ) != $gid;
             push @changed, "class is '$class', should be '$uf->{class}'"
               if ( defined $uf->{class} && $class ne $uf->{class} );
             push @changed, "homedir is $home, should be $uf->{home}"
@@ -955,12 +1022,8 @@ sub walk_users($self) {
             if ( $self->{apply} ) {
 
                 # apply the recommendations with usermod(8)
-                $self->queue_user_mod(
-                    $name, $uid,
-                    $self->user_mod_args(
-                        $uf, $gid, $gname, $class, $home, $shell
-                    )
-                );
+                $self->queue_user_mod( $name, $uid, $gid, $gname, $class,
+                    $home, $shell );
             }
             elsif (@changed) {
                 print( '@user ', $user, " => ", join( ' / ', @changed ), "\n" );
@@ -971,8 +1034,7 @@ sub walk_users($self) {
         # The name is known to the reference but the uid differs.  Do not
         # delete or rewrite the account: it may be a different account that
         # reused an obsolete name.
-        if ( exists( $self->{user_fields}{$name} ) ) {
-            my $uf = $self->{user_fields}{$name};
+        if ($uf) {
             if ( !defined( $uf->{uid} ) || $uid != $uf->{uid} ) {
                 if ( $self->{apply} ) {
                     $self->warning(
@@ -990,8 +1052,6 @@ sub walk_users($self) {
                 next;
             }
 
-            # the name and uid match the reference; any remaining difference
-            # is a key-format mismatch, not evidence of an obsolete account
             next;
         }
 
@@ -1022,6 +1082,12 @@ sub walk_groups($self) {
           if exists( $self->{ignored_groups}{$group} )
           || exists( $self->{ignored_group_names}{$name} );
 
+        if ( $self->{ambiguous_groups}{$name} ) {
+            $self->warning( "conflicting references for group '$name': "
+                  . join( ', ', @{ $self->{group_sources}{$name} } ) );
+            $self->{removed}{failed}++ if $self->{apply};
+            next;
+        }
         next if exists( $self->{groups}{$group} );
 
         # A known group name with a different gid is not necessarily
@@ -1077,9 +1143,20 @@ sub walk($self) {
 
 # Record exact candidates for the later apply phase. These helpers are inert
 # in read-only mode, keeping the scanner's listing behavior non-mutating.
-sub queue_path( $self, $filename ) {
+sub queue_path( $self, $filename, $entry = undef ) {
     return unless $self->{apply};
-    push @{ $self->{actions} }, { type => 'path', name => $filename };
+    my @st = $entry ? @$entry : lstat($filename);
+    if ( !@st ) {
+        $self->warning("cannot record identity of '$filename': $!");
+        $self->{removed}{failed}++;
+        return;
+    }
+    push @{ $self->{actions} },
+      {
+        type     => 'path',
+        name     => $filename,
+        identity => [ @st[ 0, 1 ], $st[2] & S_IFMT ],
+      };
 }
 
 # Preserve the observed uid/gid alongside the name so apply can detect account
@@ -1096,13 +1173,43 @@ sub queue_group( $self, $name, $gid ) {
     push @{ $self->{actions} }, { type => 'group', name => $name, gid => $gid };
 }
 
-# Queue a changed user only when there is at least one concrete option pair;
-# the copied array reference keeps the action independent of the local list.
-sub queue_user_mod( $self, $name, $uid, @opts ) {
+# Record an authorized modification and the state used to derive it.
+sub queue_user_mod( $self, $name, $uid, @observed ) {
     return unless $self->{apply};
+    my $ref  = $self->{user_fields}{$name};
+    my @opts = $self->user_mod_args( $ref, @observed );
     return unless @opts;
+    my $target_gid;
+    if ( !valid_usermod_args(@opts) ) {
+        $self->warning("invalid reference usermod options for '$name'");
+        $self->{removed}{failed}++;
+        return;
+    }
+    if ( $opts[0] eq '-g' ) {
+        $target_gid = account_group_id( $opts[1] );
+        if ( !defined $target_gid
+            || ( defined $ref->{gid} && $target_gid != $ref->{gid} ) )
+        {
+            $self->warning("cannot resolve reference group for '$name'");
+            $self->{removed}{failed}++;
+            return;
+        }
+    }
     push @{ $self->{actions} },
-      { type => 'user_mod', name => $name, uid => $uid, opts => [@opts] };
+      {
+        type       => 'user_mod',
+        name       => $name,
+        uid        => $uid,
+        opts       => \@opts,
+        observed   => \@observed,
+        target_gid => $target_gid,
+      };
+}
+
+sub account_group_id($group) {
+    my @entry = getgrnam($group);
+    @entry = getgrgid($group) if !@entry && $group =~ /\A[0-9]+\z/;
+    return $entry[2];
 }
 
 # Translate differing reference fields into the supported usermod option/value
@@ -1110,12 +1217,12 @@ sub queue_user_mod( $self, $name, $uid, @opts ) {
 sub user_mod_args( $self, $uf, $gid, $gname, $class, $home, $shell ) {
     my @opts = ();
 
-    # primary group: prefer the expected group name over the numeric gid
-    if (   ( defined $uf->{group} && $gname ne $uf->{group} )
-        || ( defined $uf->{gid} && $gid != $uf->{gid} ) )
-    {
-        my $want = defined $uf->{group} ? $uf->{group} : $uf->{gid};
-        push @opts, '-g', $want;
+    # Compare primary group identity numerically even when the reference uses
+    # a group name. The displayed name can be an alias of the same GID.
+    my $want = $uf->{gid} // $uf->{group};
+    if ( defined $want ) {
+        my $want_gid = $uf->{gid} // account_group_id($want);
+        push @opts, '-g', $want if !defined $want_gid || $gid != $want_gid;
     }
 
     push @opts, '-L', $uf->{class}
@@ -1202,7 +1309,7 @@ sub check_removable_path( $self, $path ) {
 # Remove one non-directory entry or one empty directory. lstat and the cached
 # stat buffer distinguish a symlink-to-directory from a directory; no branch
 # recursively descends, and every failed check or syscall increments failures.
-sub remove_path( $self, $path ) {
+sub remove_path( $self, $path, $identity = undef ) {
     if ( my $reason = $self->check_removable_path($path) ) {
         $self->warning("not removing '$path': $reason");
         $self->{removed}{failed}++;
@@ -1213,6 +1320,12 @@ sub remove_path( $self, $path ) {
     my @st = lstat($path);
     if ( !@st ) {
         $self->warning("lstat '$path': $!");
+        $self->{removed}{failed}++;
+        return 0;
+    }
+
+    if ( $identity && !same_path_identity( $identity, \@st ) ) {
+        $self->warning("not removing '$path': identity changed since scanning");
         $self->{removed}{failed}++;
         return 0;
     }
@@ -1240,6 +1353,14 @@ sub remove_path( $self, $path ) {
     return 0;
 }
 
+sub same_path_identity( $identity, $st ) {
+    return
+         @$st
+      && $identity->[0] == $st->[0]
+      && $identity->[1] == $st->[1]
+      && $identity->[2] == ( $st->[2] & S_IFMT );
+}
+
 # Accept only account names whose first character cannot be an option prefix
 # and whose remaining characters match the account-name allowlist.
 sub valid_account_name($name) {
@@ -1264,7 +1385,8 @@ sub valid_usermod_args {
         return 0 if !defined($val);
         return 0 if $val =~ /[\x00-\x1f\x7f]/;
         return 0 if $val =~ /^-/;
-        return 0 if $val eq '' && ( $opt eq '-g' || $opt eq '-d' );
+        return 0 if $val eq ''   && $opt eq '-d';
+        return 0 if $opt eq '-g' && !valid_account_name($val);
     }
     return 1;
 }
@@ -1279,10 +1401,11 @@ sub check_removable_user( $self, $name, $uid ) {
     return "account no longer exists" if !@pw;
 
     my $current_uid = $pw[2];
-    my $gid         = $pw[3];
-    my $class       = $pw[5];
-    my $home        = $pw[7];
-    my $shell       = $pw[8];
+    return 'not a system uid' if $current_uid >= 1000;
+    my $gid   = $pw[3];
+    my $class = $pw[5];
+    my $home  = $pw[7];
+    my $shell = $pw[8];
 
     return "uid changed from $uid to $current_uid"
       if defined($uid) && $current_uid != $uid;
@@ -1321,8 +1444,8 @@ sub check_removable_group( $self, $name, $gid ) {
     return "group no longer exists" if !@gr;
 
     my $current_gid = $gr[2];
-    return "gid changed from $gid to $current_gid"
-      if defined($gid) && $current_gid != $gid;
+    return 'not a system gid' if !defined($gid) || $current_gid >= 1000;
+    return "gid changed from $gid to $current_gid" if $current_gid != $gid;
 
     my $group = join( ':', ( $name, $current_gid ) );
 
@@ -1351,106 +1474,151 @@ sub remove_user( $self, $name, $uid ) {
         return 0;
     }
 
-    if ( system( '/usr/sbin/userdel', $name ) == 0 ) {
-        logi("userdel $name");
-        $self->{removed}{users}++;
-        return 1;
+    my $error = run_account_helper( '/usr/sbin/userdel', $name );
+    if ( !defined $error ) {
+        local $! = 0;
+        my @current = getpwnam($name);
+        if ( !@current && !$! ) {
+            logi("userdel $name");
+            $self->{removed}{users}++;
+            return 1;
+        }
+        if (   @current
+            && $current[2] == $uid
+            && ( $current[8] // '' ) eq '/sbin/nologin' )
+        {
+            logi("userdel $name: account retained with nologin shell");
+            $self->{removed}{preserved}++;
+            return 1;
+        }
+        $error =
+          @current
+          ? 'account still present after helper success'
+          : "cannot verify removal: $!";
     }
-    $self->warning("userdel '$name' failed");
+    $self->warning("userdel '$name': $error");
     $self->{removed}{failed}++;
     return 0;
+}
+
+# Use a fresh enumeration after preceding account operations.
+sub primary_group_dependency($gid) {
+    local $! = 0;
+    setpwent();
+    my $seen_root = 0;
+    while ( my @pw = getpwent() ) {
+        $seen_root = 1 if $pw[0] eq 'root' && $pw[2] == 0;
+        if ( $pw[3] == $gid ) {
+            endpwent();
+            return "primary group of '$pw[0]'";
+        }
+        $! = 0;
+    }
+    my $error = $! ? "$!" : undef;
+    endpwent();
+    return "cannot verify primary groups: $error" if defined $error;
+    return 'cannot verify primary groups: root account missing'
+      unless $seen_root;
+    return;
+}
+
+sub run_account_helper( $helper, @args ) {
+    my $status = system( $helper, @args );
+    return                             if $status == 0;
+    return "cannot execute helper: $!" if $status == -1;
+    return 'helper terminated by signal ' . ( $status & 127 ) if $status & 127;
+    return 'helper exited with status ' . ( $status >> 8 );
 }
 
 # Revalidate and invoke groupdel in list form, recording any refusal or failure.
 sub remove_group( $self, $name, $gid ) {
-    if ( my $reason = $self->check_removable_group( $name, $gid ) ) {
+    my $reason = $self->check_removable_group( $name, $gid );
+    $reason //= primary_group_dependency($gid);
+    $reason //= $self->check_removable_group( $name, $gid );
+    $reason //= '/usr/sbin/groupdel missing' unless -x '/usr/sbin/groupdel';
+    if ( defined $reason ) {
         $self->warning("not removing group '$name': $reason");
         $self->{removed}{failed}++;
         return 0;
     }
-    if ( !-x '/usr/sbin/groupdel' ) {
-        $self->warning(
-            "not removing group '$name': /usr/sbin/groupdel missing");
-        $self->{removed}{failed}++;
-        return 0;
-    }
 
-    if ( system( '/usr/sbin/groupdel', $name ) == 0 ) {
+    my $error = run_account_helper( '/usr/sbin/groupdel', $name );
+    if ( !defined $error ) {
         logi("groupdel $name");
         $self->{removed}{groups}++;
         return 1;
     }
-    $self->warning("groupdel '$name' failed");
+    $self->warning("groupdel '$name': $error");
     $self->{removed}{failed}++;
     return 0;
 }
 
-# Validate identity and option pairs, confirm the account still has its queued
-# uid and a reference record, then apply the list-form usermod command.
-sub modify_user( $self, $name, $opts, $uid ) {
-    if ( !valid_account_name($name) ) {
-        $self->warning("not modifying user '$name': invalid name");
-        $self->{removed}{failed}++;
-        return 0;
+# Build options again from the live account and verify the reference,
+# destination group and previous values before invoking usermod.
+sub modify_user( $self, $action ) {
+    my $name   = $action->{name};
+    my $reason = $self->user_mod_refusal($action);
+    return 1 if defined $reason && $reason eq '';
+    if ( !defined $reason ) {
+        $reason =
+          !-x '/usr/sbin/usermod'
+          ? 'missing /usr/sbin/usermod'
+          : run_account_helper( '/usr/sbin/usermod', @{ $action->{opts} },
+            $name );
+        if ( !defined $reason ) {
+            logi("usermod $name");
+            $self->{removed}{modified}++;
+            return 1;
+        }
     }
-    if ( !valid_usermod_args(@$opts) ) {
-        $self->warning("not modifying user '$name': invalid usermod arguments");
-        $self->{removed}{failed}++;
-        return 0;
-    }
-
-    my @pw = getpwnam($name);
-    if ( !@pw ) {
-        $self->warning("not modifying user '$name': account no longer exists");
-        $self->{removed}{failed}++;
-        return 0;
-    }
-    if ( defined($uid) && $pw[2] != $uid ) {
-        $self->warning(
-            "not modifying user '$name': uid changed from $uid to $pw[2]");
-        $self->{removed}{failed}++;
-        return 0;
-    }
-    if ( !exists $self->{user_fields}{$name} ) {
-        $self->warning(
-            "not modifying user '$name': no reference entry available");
-        $self->{removed}{failed}++;
-        return 0;
-    }
-    if ( !-x '/usr/sbin/usermod' ) {
-        $self->warning("not modifying user '$name': /usr/sbin/usermod missing");
-        $self->{removed}{failed}++;
-        return 0;
-    }
-
-    if ( system( '/usr/sbin/usermod', @$opts, $name ) == 0 ) {
-        logi("usermod $name");
-        $self->{removed}{modified}++;
-        return 1;
-    }
-    $self->warning("usermod '$name' failed");
+    $self->warning("not completing usermod for '$name': $reason");
     $self->{removed}{failed}++;
     return 0;
+}
+
+sub user_mod_refusal( $self, $action ) {
+    my ( $name, $uid, $opts, $observed, $target_gid ) =
+      @$action{qw(name uid opts observed target_gid)};
+    return 'invalid name' unless valid_account_name($name);
+    return 'invalid usermod arguments'
+      unless @$opts && valid_usermod_args(@$opts);
+    return 'user is ignored' if $self->{ignored_user_names}{$name};
+    my $ref = $self->{user_fields}{$name};
+    return 'missing or ambiguous reference identity'
+      if !$ref
+      || $ref->{ambiguous}
+      || !defined $ref->{uid}
+      || $uid != $ref->{uid};
+
+    my @pw = getpwnam($name);
+    return 'account no longer exists' if !@pw;
+    return 'account uid changed'      if $pw[2] != $uid || $pw[2] >= 1000;
+    my $gname   = getgrgid( $pw[3] ) // $pw[3];
+    my @current = @pw[ 3, 5, 7, 8 ];
+    splice @current, 1, 0, $gname;
+    my @opts_now = $self->user_mod_args( $ref, @current );
+    if (   defined $ref->{gid}
+        && defined $ref->{group}
+        && ( account_group_id( $ref->{group} ) // -1 ) != $ref->{gid} )
+    {
+        return 'reference group name and gid disagree';
+    }
+    if ( defined $target_gid ) {
+        my $live_gid = account_group_id( $opts->[1] );
+        return 'destination group changed since scanning'
+          if !defined $live_gid || $live_gid != $target_gid;
+    }
+    return '' unless @opts_now;
+    return 'account fields changed since scanning'
+      if join( "\0", @current ) ne join( "\0", @$observed )
+      || join( "\0", @opts_now ) ne join( "\0", @$opts );
+    return;
 }
 
 # Validate paths before granting parent-directory write access, unveil only
 # required account helpers, lock the view, and install the apply syscall set.
 # Helper children are not confined by this parent's pledge/unveil state.
 sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
-
-    # Validate every path before granting write access.  A path that is going
-    # to be refused must not cause unveil(2) to open its parent directory.
-    my @valid = ();
-    for my $path (@$paths) {
-        my $reason = $self->check_removable_path($path);
-        if ( defined($reason) ) {
-            $self->warning("not removing '$path': $reason");
-            $self->{removed}{failed}++;
-            next;
-        }
-        push( @valid, $path );
-    }
-    @$paths = @valid;
 
     # grant write access only to the directories holding targeted paths
     my %dirs = ();
@@ -1497,12 +1665,37 @@ sub prepare_apply( $self, $paths, $users, $groups, $user_mods ) {
     return 1;
 }
 
-# Split and deduplicate the recorded actions, prepare the sandbox, then perform
-# paths, users, groups, and user modifications in that order. There is no
-# rollback: a later failure can follow earlier successful changes.
+# Reject top-level entries before any sandbox change. Other path failures
+# are counted individually so the rest of the plan can still proceed.
+sub preflight_paths( $self, $actions ) {
+    for my $action (@$actions) {
+        my $path = $action->{name};
+        $self->err( 1, "cannot apply plan with top-level candidate '$path'" )
+          if $path eq '/' || dirname($path) eq '/';
+    }
+    my @valid;
+    for my $action (@$actions) {
+        my $path   = $action->{name};
+        my $reason = $self->check_removable_path($path);
+        if ( !defined $reason ) {
+            my @st = lstat($path);
+            $reason = 'identity changed or unavailable since scanning'
+              if !$action->{identity}
+              || !same_path_identity( $action->{identity}, \@st );
+        }
+        if ( defined $reason ) {
+            $self->warning("not removing '$path': $reason");
+            $self->{removed}{failed}++;
+            next;
+        }
+        push @valid, $action;
+    }
+    return @valid;
+}
+
+# Deduplicate and preflight before previewing or granting write permissions.
 sub apply($self) {
-    my @paths = map { $_->{name} }
-      grep { $_->{type} eq 'path' } @{ $self->{actions} };
+    my @paths  = grep { $_->{type} eq 'path' } @{ $self->{actions} };
     my @users  = grep { $_->{type} eq 'user' } @{ $self->{actions} };
     my @groups = grep { $_->{type} eq 'group' } @{ $self->{actions} };
     my @user_mods =
@@ -1510,7 +1703,7 @@ sub apply($self) {
 
     # drop duplicate entries, preserving order
     my %seen = ();
-    @paths = grep { !$seen{"p\0$_"}++ } @paths;
+    @paths = grep { !$seen{ $_->{name} }++ } @paths;
     %seen  = ();
     @users = grep { !$seen{ join( "\0", 'u', $_->{name}, $_->{uid} // '' ) }++ }
       @users;
@@ -1523,29 +1716,44 @@ sub apply($self) {
       grep { !$seen{ join( "\0", 'm', $_->{name}, $_->{uid} // '' ) }++ }
       @user_mods;
 
-    $self->prepare_apply( \@paths, \@users, \@groups, \@user_mods );
+    my %path_actions =
+      map { $_->{name} => $_ } $self->preflight_paths( \@paths );
+    my @ordered = $self->sort_paths_deepest_first( [ keys %path_actions ] );
+    if ( $self->{preview} ) {
+        $self->note("planned removal: $_")         for @ordered;
+        $self->note("planned userdel: $_->{name}") for @users;
+        for my $action (@user_mods) {
+            $self->note(
+                "planned usermod: $action->{name} @{ $action->{opts} }");
+        }
+        $self->note(
+            "planned groupdel: $_->{name} (subject to primary group check)")
+          for @groups;
+        return $self->{removed}{failed} ? 1 : 0;
+    }
 
-    for my $path ( $self->sort_paths_deepest_first( \@paths ) ) {
-        $self->remove_path($path);
+    $self->prepare_apply( \@ordered, \@users, \@groups, \@user_mods );
+    for my $path (@ordered) {
+        $self->remove_path( $path, $path_actions{$path}{identity} );
     }
     for my $action (@users) {
         $self->remove_user( $action->{name}, $action->{uid} );
     }
+    for my $action (@user_mods) {
+        $self->modify_user($action);
+    }
     for my $action (@groups) {
         $self->remove_group( $action->{name}, $action->{gid} );
-    }
-    for my $m (@user_mods) {
-        $self->modify_user( $m->{name}, $m->{opts}, $m->{uid} );
     }
 
     my $r = $self->{removed};
     $self->note(
         sprintf(
-"removed %d file(s), %d director%s, %d user(s), %d group(s), %d modified user(s); %d failure(s)",
+"removed %d file(s), %d director%s, %d user(s), %d group(s), %d modified user(s), %d retained user(s); %d failure(s)",
             $r->{files},                   $r->{dirs},
             $r->{dirs} == 1 ? "y" : "ies", $r->{users},
             $r->{groups},                  $r->{modified},
-            $r->{failed}
+            $r->{preserved} // 0,          $r->{failed}
         )
     );
     return $r->{failed} ? 1 : 0;
@@ -1560,7 +1768,7 @@ use parent -norequire, qw(sysclean);
 
 # List every unexpected path in read-only mode. Apply mode adds one narrow
 # library-name check so recognized package-used libraries are not queued.
-sub find_sub( $self, $filename ) {
+sub find_sub( $self, $filename, $entry = undef ) {
 
     # -a is an all-files listing, but apply mode must not remove a library
     # that an installed package still uses.  Keep the listing behavior in
@@ -1571,7 +1779,7 @@ sub find_sub( $self, $filename ) {
         return;
     }
 
-    $self->queue_path($filename);
+    $self->queue_path( $filename, $entry );
     print( $filename, "\n" ) unless $self->{apply};
 }
 
@@ -1596,7 +1804,7 @@ sub add_expected_base_one( $self, $filename ) {
 
 # Filter unexpected library paths in two stages: package consumers first,
 # then a newer local ABI version in the same directory.
-sub find_sub( $self, $filename ) {
+sub find_sub( $self, $filename, $entry = undef ) {
 
     return if $self->library_consumers($filename);
     if ( $filename =~ m{/lib[^/]+\.so\.[0-9]+\.[0-9]+\z} ) {
@@ -1610,7 +1818,7 @@ sub find_sub( $self, $filename ) {
         }
     }
 
-    $self->queue_path($filename);
+    $self->queue_path( $filename, $entry );
     print( $filename, "\n" ) unless $self->{apply};
 }
 
@@ -1645,7 +1853,7 @@ sub walk($self) {
 }
 
 # Emit one filename/package row per compatible consumer.
-sub find_sub( $self, $filename ) {
+sub find_sub( $self, $filename, $entry = undef ) {
     for my $pkgname ( $self->library_consumers($filename) ) {
         print( $filename, "\t", $pkgname, "\n" );
     }
@@ -1661,16 +1869,11 @@ package OpenBSD::PackingElement;
 sub walk_sysclean( $item, $pkgname, $sc ) {
 }
 
-# pkg_add(1) uses a leading '!' in PLIST account fields to mark a value that
-# must not be changed.  Strip it so that the reference key matches the
-# account database instead of creating a key that can never match.
-# Remove the package-format marker that means a field is not to be changed;
-# undefined values remain undefined for later partial-field comparisons.
-sub pkg_account_value {
-    my ($value) = @_;
-    return undef if !defined($value);    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
-    $value =~ s/^!//;
-    return $value;
+# A leading ! marks a field that must match an existing account.
+sub pkg_account_value($value) {
+    return ( undef, 0 ) if !defined $value || $value eq '';
+    my $required = $value =~ s/\A!//;
+    return ( $value, $required );
 }
 
 package OpenBSD::PackingElement::Cwd;
@@ -1713,55 +1916,32 @@ package OpenBSD::PackingElement::NewGroup;
 # Store package-provided group keys and reference gids. Non-numeric gids are
 # retained as unknown rather than used as numeric identity data.
 sub walk_sysclean( $item, $pkgname, $sc ) {
-    my $name = OpenBSD::PackingElement::pkg_account_value( $item->{name} );
-    my $gid  = OpenBSD::PackingElement::pkg_account_value( $item->{gid} );
-
-    return       if !defined($name) || !length($name);
-    $gid = undef if defined($gid) && $gid !~ m{^\d+$};
-
-    my $group = join( ':', $name, defined($gid) ? $gid : '' );
-
-    $sc->{groups}{$group}      = 1;
-    $sc->{group_fields}{$name} = $gid;
+    my $name = $item->{name};
+    my ($gid) = OpenBSD::PackingElement::pkg_account_value( $item->{gid} );
+    return if !defined $name || !length $name;
+    $gid = undef if defined $gid && $gid !~ /\A[0-9]+\z/;
+    my $key = join( ':', $name, $gid // '' );
+    $sc->{groups}{$key} = 1;
+    $sc->register_group_reference( $name, $gid, $pkgname );
 }
 
 package OpenBSD::PackingElement::NewUser;
 
-# Store both full and name:uid keys, plus individually available reference
-# fields. PLIST group values may be either names or numeric gids.
 sub walk_sysclean( $item, $pkgname, $sc ) {
-    my %field = ();
-    for my $key (qw(name uid group class home shell)) {
-        $field{$key} =
+    my $name = $item->{name};
+    return if !defined $name || !length $name;
+    my ($uid) = OpenBSD::PackingElement::pkg_account_value( $item->{uid} );
+    $uid = undef if defined $uid && $uid !~ /\A[0-9]+\z/;
+    my %policy = ( uid => $uid );
+    for my $key (qw(group class home shell)) {
+        my ( $value, $required ) =
           OpenBSD::PackingElement::pkg_account_value( $item->{$key} );
+        next unless $required;
+        my $field = $key eq 'group' && $value =~ /\A[0-9]+\z/ ? 'gid' : $key;
+        $policy{$field} = $value;
     }
-
-    return if !defined( $field{name} ) || !length( $field{name} );
-    $field{uid} = undef
-      if defined( $field{uid} ) && $field{uid} !~ m{^\d+$};
-
-    my $user = join( ':',
-        map { defined( $field{$_} ) ? $field{$_} : '' }
-          qw(name uid group class home shell) );
-    my $short =
-      join( ':', map { defined( $field{$_} ) ? $field{$_} : '' } qw(name uid) );
-
-    $sc->{users}{$user}                = 1;
-    $sc->{users}{$short}               = 1;
-    $sc->{user_fields}{ $field{name} } = {
-        uid   => $field{uid},
-        class => $field{class},
-        home  => $field{home},
-        shell => $field{shell},
-    };
-
-    # sometimes, the group field in the PLIST is a gid, sometimes a groupname...
-    if ( defined( $field{group} ) && $field{group} =~ m|^\d+$| ) {
-        $sc->{user_fields}{ $field{name} }{gid} = $field{group};
-    }
-    else {
-        $sc->{user_fields}{ $field{name} }{group} = $field{group};
-    }
+    $sc->{users}{ join( ':', $name, $uid // '' ) } = 1;
+    $sc->register_user_reference( $name, \%policy, $pkgname );
 }
 
 package OpenBSD::PackingElement::Sampledir;
@@ -1801,12 +1981,12 @@ package main;
 use Getopt::Std;
 
 # Parse flags, require root, build the selected scanner, and run its inventory.
-# Only an explicit -x reaches apply(); its nonzero failure result becomes the
-# process exit status.
+# Only -n and -x reach apply(), and preview returns before any write grant.
+# Propagate plan failures to the process exit status.
 sub main {
     my %options = ();    # program flags
 
-    getopts( "apihx", \%options ) || sysclean->usage;
+    getopts( "apihnx", \%options ) || sysclean->usage;
     sysclean->usage if ( defined $options{h} || scalar(@ARGV) != 0 );
 
     sysclean->err( 1, "need root privileges" ) if ( $> != 0 );

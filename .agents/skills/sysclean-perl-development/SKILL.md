@@ -72,7 +72,10 @@ Do not use this skill for:
 * Do not use symbolic references.
 * Do not use string `eval`; it is not needed and creates an injection surface.
 * Wrap optional third-party calls in `eval { ... }` only to convert a
-  failure into a controlled error; always inspect `$@` and the return value.
+  failure into a controlled error. Check documented return values as well as
+  exceptions. `lock_db` returns undef on both success and some failures.
+* Materialize sorted collections before returning them from functions that
+  support both list and scalar contexts, such as `library_consumers`.
 * Use `/o` only for a genuinely constant pattern.  Do not use `/o` on a
   pattern built from changing data.
 * Escape data inserted into regular expressions with `quotemeta` or use
@@ -122,15 +125,19 @@ Do not use this skill for:
 3. Convert helper failures into controlled errors; do not ignore `$?`.
 4. Add a unit test when the logic can be tested without system access.
 5. Run static checks; do not run destructive modes.
-6. Update the domain skill and `AGENTS.md` only if the contract changes.
+6. Synchronize applicable instructions with reusable implementation knowledge
+   and validate them as required by `AGENTS.md`.
 
 ## Checks
 
 * `perl -c sysclean.pl`
-* `perlcritic sysclean.pl` when available (do not make the project depend on
-  it)
-* `perltidy --check` only if the project already uses that workflow; do not
-  reformat unrelated code
+* Use `validate-perl --check --strict .` when available to check syntax,
+  formatting, and Perl::Critic across the repository. On non-OpenBSD hosts,
+  prepend the absolute `regress/stubs` path to `PERL5LIB` for the syntax check.
+  The validator writes its diagnostics to the log path it prints.
+* Preserve scalar context when testing helpers that return no value on
+  success. A bare `return` produces an empty list in list context.
+* Use `Fcntl::S_IFMT` for the file-type mask instead of an octal literal.
 * `make regress`
 * `git diff --check`
 * manual grep for new `system`, `eval`, backticks and shell strings
@@ -161,7 +168,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

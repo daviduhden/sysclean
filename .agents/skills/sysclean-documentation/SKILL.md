@@ -51,9 +51,11 @@ The manual must clearly state:
 
 * default mode is read-only;
 * `-x` is the only destructive mode;
-* `-x` is incompatible with `-p`;
+* `-n` previews the apply plan under read-only confinement. Keep the same
+  `-a` and `-i` flags for preview and apply;
+* `-p` is incompatible with preview and apply;
 * `-x -a` reports used libraries in read-only mode but protects them from
-  removal when their names match `{used_libs}`;
+  removal when they match native package library specifications;
 * `-i` has opposite effects in read-only and apply mode:
   * read-only `-i` includes ignored filenames;
   * `-x -i` protects ignored elements;
@@ -67,7 +69,8 @@ The manual must clearly state:
 * hard-coded ignores are always respected;
 * apply mode exits 1 if a requested removal or account update fails.
 
-`PKG_DBDIR` affects only the package database.  Do not imply that
+`PKG_DBDIR` can select an alternate package database in ordinary queries.
+Preview and apply require the host package database.  Do not imply that
 `PKG_DBDIR` or `DESTDIR` isolates the host root; record that limitation in
 `AUDIT.md` and `AGENTS.md`, not as a runtime option in the manual.
 
@@ -135,7 +138,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

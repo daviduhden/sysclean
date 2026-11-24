@@ -42,13 +42,13 @@ read-only.
 
 Fork-only behavior:
 
-* apply mode `-x` and all apply helpers, including `-x -a` protection for
-  libraries recorded in `{used_libs}`;
+* preview mode `-n`, apply mode `-x` and all apply helpers, including
+  `-x -a` protection using native package library specifications;
 * apply-mode `-i` semantics;
 * `usermod` recommendations for modified users;
 * account uid/gid mismatch protection and revalidation;
-* `@dir` PLIST pass-through, stripping of `pkg_add(1)` `!` markers from
-  account metadata, and name-based `@user`/`@group` matching;
+* `@dir` PLIST pass-through, mandatory package-account field tracking,
+  and name-based `@user`/`@group` matching;
 * fail-closed reference-inventory checks;
 * `[INFO]`/`[WARN]`/`[ERROR]` logging and control-character escaping;
 * additional hard-coded ignores (`/etc/ssl/cert.pem`,
@@ -57,9 +57,9 @@ Fork-only behavior:
 * the later read-only `pledge(2)` (after helper execution);
 * apply unit tests, `AUDIT.md`, the FORK manual section and fork copyright.
 
-Everything else is inherited: read-only scanner, package/library integration,
-locate/MAKEDEV/rcctl inventory, base/package account model, README generation,
-release/regress targets.
+The read-only scanner, locate/MAKEDEV/rcctl inventory, and base/package
+account model originated upstream. Compare library matching and build
+targets method by method because this fork has changed their behavior.
 
 Hard rules:
 
@@ -152,7 +152,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

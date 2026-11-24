@@ -1,4 +1,4 @@
-.Dd October 24, 2026
+.Dd November 24, 2026
 .Dt SYSCLEAN 8
 .Os
 .Sh NAME
@@ -8,7 +8,10 @@
 .Nm
 .Op Fl a | p
 .Op Fl i
-.Op Fl x
+.Nm
+.Op Fl a
+.Op Fl i
+.Brq Fl n | x
 .Sh DESCRIPTION
 .Nm
 is a
@@ -27,7 +30,10 @@ is a read-only tool.
 It does not remove anything on the system.
 This can be changed with the
 .Fl x
-option, which applies the reported cleanup.
+option, which applies a cleanup plan to the running system.
+The
+.Fl n
+option shows the plan using the same inventory and selection rules.
 .Pp
 By default,
 .Nm
@@ -47,15 +53,28 @@ In the default read-only mode,
 .Nm
 will include filenames that are ignored by default, using
 .Pa /etc/sysclean.ignore .
-When combined with
-.Fl x ,
+In a cleanup plan
+.Pq Fl n No or Fl x ,
 the meaning is inverted:
 elements listed in
 .Pa /etc/changelist
 and
 .Pa /etc/sysclean.ignore
 are respected and are not removed.
-Hard-coded ignores remain active in both cases.
+Hard-coded ignores remain active in all modes.
+.It Fl n
+Preview the cleanup plan.
+Use the same
+.Fl a
+and
+.Fl i
+flags in the preview and apply invocations.
+Path preflight runs during preview.
+Account actions remain subject to checks against the live system at execution.
+This option is incompatible with
+.Fl p
+and
+.Fl x .
 .It Fl p
 Package mode.
 .Nm
@@ -70,11 +89,17 @@ only when they are empty.
 Obsolete users and groups are removed with
 .Xr userdel 8
 and
-.Xr groupdel 8 ;
-their home directories are preserved.
-System users whose group, login class, home directory or shell differs
-from the reference installation are updated with
-.Xr usermod 8 .
+.Xr groupdel 8 .
+User home directories are preserved.
+A group still used as a primary group is refused.
+Local
+.Xr userdel 8
+preservation settings can retain a disabled account.
+Supported account fields are updated with
+.Xr usermod 8
+when the matching reference authorizes the change.
+For an existing package account, the PLIST must mark a field as required
+before it can authorize an update.
 An account whose name matches the reference installation but whose
 uid or gid differs is reported but is not removed or modified.
 .Pp
@@ -109,7 +134,12 @@ The standard package database directory,
 .Pa /var/db/pkg ,
 can be overridden by specifying an alternative directory in the
 .Ev PKG_DBDIR
-environment variable.
+environment variable for ordinary queries.
+Plans made with
+.Fl n
+or
+.Fl x
+use the host package database.
 .El
 .Sh FILES
 .Bl -tag -width "/etc/sysclean.ignore"
@@ -125,6 +155,8 @@ will be interpreted as user or group to ignore.
 A line of the form
 .Sq @include
 followed by a quoted file name loads another ignore file.
+Relative include paths are resolved from
+.Pa / .
 A missing included file is an error.
 .Pp
 Shell globbing is supported in pathnames; see
@@ -162,18 +194,19 @@ Obtain a list of all outdated files (including used libraries):
 /usr/lib/libc.so.84.1
 .Ed
 .Pp
-Obtain a list of users and groups that can safely be removed
-(from ports or base):
+List account candidates for review:
 .Bd -literal -offset indent
 # sysclean
 @user _mpd:560:_mpd::/var/spool/mpd:/sbin/nologin
 @group _mpd:560
 .Ed
 .Pp
-Remove the obsolete files reported (files used by installed packages are
-excluded by default):
+Preview the cleanup while honoring local exclusions, then apply after
+reviewing the plan:
 .Bd -literal -offset indent
-# sysclean -x
+# sysclean -ni
+[INFO] planned removal: /usr/lib/libc.so.83.0
+# sysclean -xi
 [INFO] unlink /usr/lib/libc.so.83.0
 .Ed
 .Sh SEE ALSO
@@ -195,20 +228,27 @@ was written by
 .Sh CAVEATS
 The
 .Fl x
-option modifies the system.
-Obsolete elements should be reviewed by first running
-.Nm
-without
-.Fl x .
+option modifies the running system.
+Review a fresh
+.Fl n
+plan before applying.
+The reference data may omit legitimate local files and accounts.
+A candidate immediately under
+.Pa /
+causes the plan to abort before mutation, since the scan gives that
+directory a read-only unveil rule.
 .Pp
 .Nm
-never removes a non-empty directory and never follows a symbolic link in
-the final pathname component.
-A pathname with a symbolic link in an ancestor component is not removed.
+removes directories only when empty.
+The final component of a symbolic link is unlinked without following it.
+An ancestor symbolic link or a detected change in object identity
+causes a candidate to be refused.
+The final validation and removal are separate operations.
 .Pp
 In apply mode,
 .Nm
-exits with status 1 if any requested removal or account update fails.
+exits with status 1 if an action fails or is refused.
+Successful changes from earlier actions remain in place.
 .Sh FORK
 This manual page is part of a fork of
 .Nm

@@ -70,9 +70,8 @@ Hard rules:
 
 1. Read `AGENTS.md` and the current `AUDIT.md` sections on reference data and
    known limitations.
-2. Identify the mode: default, `-i`, `-a`, `-p` or `-x` (with or without
-   `-i`).  The inventory differs only through subclass overrides, not through
-   a separate scanner.
+2. Identify the mode: default, `-i`, `-a`, `-p`, `-n` or `-x`. Preview uses
+   the apply inventory policy with a read-only process ceiling.
 3. Trace the path through every source in this order:
    * hard-coded `expected` list and `/etc/hostname.*`;
    * `locate` source and X databases;
@@ -127,7 +126,10 @@ removal.
    * X locate absence is accepted if the system lacks the X base sentinel;
    * a failed `rcctl ls on` aborts apply mode;
    * an unexpected `MAKEDEV` command is an error;
-   * missing/empty `etc.tgz` members are an error.
+   * missing/empty `etc.tgz` members are an error; apply and preview also
+     check row widths and the root and wheel reference entries;
+   * traversal warnings and failed entry metadata reads abort apply and
+     preview; ordinary queries warn and continue.
 4. Keep the read-only behavior conservative: a warning is acceptable in
    read-only mode only when removal cannot follow.
 5. Add or update a non-destructive test when the logic can be isolated.
