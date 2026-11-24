@@ -42,7 +42,9 @@ Do not use this skill for:
   `${INSTALL} ${INSTALL_COPY} -o ${BINOWN} -g ${BINGRP} -m ${BINMODE}`.
   The manual is installed by `bsd.prog.mk` from `MAN`/`MANDIR`.
 * `README.md` is generated from `sysclean.8` with `mandoc -T markdown` and a
-  small `sed` normalization.
+  small `sed` normalization. The regression renders into a unique
+  temporary directory and compares content without renaming the checkout's
+  README. Use the native OpenBSD renderer for the published Markdown.
 * `regress` runs syntax, apply unit tests, man lint, README sync and man date.
 * `release` is conditional on `VERSION`:
   * undefined: prints an error and fails;

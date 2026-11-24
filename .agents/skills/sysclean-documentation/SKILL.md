@@ -41,8 +41,8 @@ Do not use this skill for:
   its full content in skills or in `AGENTS.md`; reference it.
 * Keep the manual and README synchronized.  Prefer editing the manual and
   running the Makefile rule; do not hand-edit README prose in normal work.
-* `.Dd` must match the date of the last commit that changes `sysclean.8` (the
-  regress target checks this).
+* Use `.Dd` for the manual editorial revision date. The regress target
+  checks the canonical calendar format. Header-only edits need no bump.
 * Preserve upstream attribution and the fork provenance section.
 
 ## Required content
@@ -92,7 +92,7 @@ statement that it modifies the system.
 ## Modification procedure
 
 1. Edit `sysclean.8` first.
-2. Update `.Dd` to the intended commit date.
+2. Update `.Dd` to the editorial date for substantive manual changes.
 3. Regenerate `README.md` with the Makefile rule.
 4. Update `AUDIT.md` separately if the change affects apply-mode guarantees,
    validation, sandbox behavior or limitations.

@@ -17,13 +17,16 @@ realinstall:
 	${INSTALL} ${INSTALL_COPY} -o ${BINOWN} -g ${BINGRP} -m ${BINMODE} \
 		${.CURDIR}/${SCRIPT} ${DESTDIR}${BINDIR}/sysclean
 
-README.md: sysclean.8
-	mandoc -T markdown sysclean.8 \
-	| sed	-e 's/&nbsp;/ /g' \
-		-e 's/&lt;/</g' \
-		-e 's/&gt;/>/g' \
-		-e 's/\\\[/[/g' \
-	>$@
+# Generate into temporary files so a renderer failure leaves the README intact.
+RENDER_README=	LC_ALL=C mandoc -I os=OpenBSD -T markdown sysclean.8 > "$$tmp/raw" && \
+	sed -e 's/&nbsp;/ /g' -e 's/&lt;/</g' -e 's/&gt;/>/g' \
+	    -e 's/\\\[/[/g' -e 's/[[:blank:]]*$$//' "$$tmp/raw" > "$$tmp/README.md"
+
+README.md: sysclean.8 Makefile
+	@set -e; tmp=$$(mktemp -d ./.sysclean-readme.XXXXXXXX); \
+		trap 'rm -rf "$$tmp"' EXIT; trap 'exit 1' HUP INT TERM; \
+		${RENDER_README}; \
+		chmod 644 "$$tmp/README.md"; mv "$$tmp/README.md" "$@"
 
 regress: run-regress-perl-syntax \
 	run-regress-apply-unit \
@@ -50,30 +53,20 @@ run-regress-man-lint:
 # ensure README.md and man page are in sync
 run-regress-man-readme:
 	@echo TEST: README.md sync
-	@mv README.md README.md.orig
-	@${MAKE} README.md
-	@mv README.md README.md.new
-	@mv README.md.orig README.md
-	diff -q README.md README.md.new
-	@rm README.md.new
+	@set -e; tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/sysclean-readme.XXXXXXXX"); \
+		trap 'rm -rf "$$tmp"' EXIT; trap 'exit 1' HUP INT TERM; \
+		${RENDER_README}; \
+		diff -q README.md "$$tmp/README.md"
 
-# ensure .Dd date inside man page is the right date
+# Use the editorial revision date. Header-only commits need no date change.
 run-regress-man-date:
 	@echo TEST: man page date
-	@if [ -d .git ]; then \
-		d="$$(date -r $$(git log -1 --format=%ct sysclean.8) \
-			+'.Dd %B %d, %Y' | sed -e 's/ 0/ /')"; \
-		grep -qF -- "$$d" sysclean.8 ; \
-	elif [ -d .got ]; then \
-		grep -qF -- \
-			"$$(got log -l 1 sysclean.8 \
-				| sed -ne 's/^date: //p' \
-				| xargs -0 date -j -f '%a %b %d %T %Y %Z' \
-					+'.Dd %B %d, %Y')" \
-			sysclean.8 ; \
-	else \
-		echo "unchecked" ; \
-	fi
+	@LC_ALL=C perl -MTime::Piece -ne 'next unless /^\.Dd\b/; \
+		die "invalid .Dd date\n" unless /^\.Dd ([A-Za-z]+ [1-9][0-9]?, [0-9]{4})$$/; \
+		$$date = $$1; $$t = Time::Piece->strptime($$date, "%B %d, %Y"); \
+		die "invalid .Dd date\n" unless $$t->strftime("%B ") . $$t->mday . \
+		    $$t->strftime(", %Y") eq $$date; $$dates++; \
+		END { die "expected one .Dd date\n" unless $$dates == 1 }' sysclean.8
 
 .if !defined(VERSION)
 release:

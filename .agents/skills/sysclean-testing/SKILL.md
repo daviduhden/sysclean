@@ -56,9 +56,10 @@ Use instead:
 * `run-regress-apply-unit`: `perl regress/apply.t` (non-destructive unit
   tests with stubs and `File::Temp`).
 * `run-regress-man-lint`: `mandoc -T lint -W style sysclean.8`.
-* `run-regress-man-readme`: regenerates `README.md` and compares it.
-* `run-regress-man-date`: checks `.Dd` against the last commit date of
-  `sysclean.8`.
+* `run-regress-man-readme`: renders the manual in a temporary directory and
+  compares it with the tracked README.
+* `run-regress-man-date`: validates the single editorial `.Dd` as a
+  calendar date. Header-only edits do not require a date change.
 
 Run `perl scripts/validate-agent-knowledge.pl --scope worktree` to validate instruction
 structure and local references. Add `--base <git-revision>` to require a
