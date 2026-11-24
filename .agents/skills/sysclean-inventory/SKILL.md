@@ -122,9 +122,9 @@ removal.
 2. Normalize directory keys by removing a trailing slash (except `/`), so
    they match `File::Find` paths.
 3. Validate external output and fail closed in apply mode:
-   * an empty `locate` inventory is always an error; a failed `locate` is
-     fatal in apply mode and a warning in read-only mode;
-   * a missing optional X locate database is skipped, not fatal;
+   * base and X locate databases are read separately; apply and preview
+     check set labels, the running release, the required set and read status;
+   * X locate absence is accepted if the system lacks the X base sentinel;
    * a failed `rcctl ls on` aborts apply mode;
    * an unexpected `MAKEDEV` command is an error;
    * missing/empty `etc.tgz` members are an error.
@@ -172,7 +172,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered

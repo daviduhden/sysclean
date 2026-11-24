@@ -301,49 +301,70 @@ sub add_expected_base($self) {
 
     # The source database is required; the X database is optional on systems
     # without X. Locate output is normalized before it becomes an exact key.
-    use OpenBSD::Paths;
-
     my $srcdb = OpenBSD::Paths->srclocatedb;
     my $xdb   = OpenBSD::Paths->xlocatedb;
 
-    $self->err( 1, "can't read base locatedb '$srcdb'" )
-      if !defined($srcdb) || !length($srcdb) || !-e $srcdb;
+    $self->read_locate_inventory( $srcdb, qr/base|comp|etc|game|man/, 'base' );
+    if ( stat($xdb) ) {
+        $self->read_locate_inventory( $xdb,
+            qr/xbase|xetc|xfont|xserv|xshare/, 'xbase' );
+    }
+    elsif ( $! != ENOENT || -l $xdb || -e '/usr/X11R6/bin/xauth' ) {
+        my $msg = "can't read X locate database '$xdb'";
+        $self->err( 1, $msg ) if $self->{apply};
+        $self->warning($msg);
+    }
+}
 
-    my @locate_args = ( '-d', $srcdb );
+sub read_locate_inventory( $self, $database, $sets, $required_set ) {
+    open( my $cmd, '-|', '/usr/bin/locate', '-d', $database, '*' )
+      || $self->err( 1, "can't read locate database '$database': $!" );
 
-    # systems without X do not ship the X locate database; do not make
-    # locate(1) fail merely because the optional database is absent
-    push( @locate_args, '-d', $xdb )
-      if defined($xdb) && length($xdb) && -e $xdb;
-
-    open( my $cmd, '-|', 'locate', @locate_args, '*' )
-      || $self->err( 1, "can't read base locatedb" );
-
-    my $entries = 0;
+    my $release;
+    if ( $self->{apply} ) {
+        $release = ( uname() )[2];
+        $self->err( 1, "can't determine OpenBSD release" )
+          if !defined($release) || $release !~ /\A[0-9]+\.[0-9]+\z/;
+        $release =~ tr/.//d;
+    }
+    my $entries          = 0;
+    my $required_entries = 0;
+    my $malformed        = 0;
     while (<$cmd>) {
         chomp;
-        my ( undef, $filename ) = split( ':', $_, 2 );
-        next if !defined($filename) || !length($filename);
-
-        # Collapse repeated separators and remove a trailing slash so locate
-        # results use the same exact-path form as File::Find.
+        my ( $label, $filename ) = split( ':', $_, 2 );
+        if (
+               !defined($filename)
+            || $filename !~ m{\A/}
+            || (
+                $self->{apply}
+                && (   $label !~ /\A(?:$sets)\Q$release\E\z/
+                    || $filename =~ m{[\x00-\x1f\x7f]|/\.\.?(?:/|\z)} )
+            )
+          )
+        {
+            $malformed++;
+            next;
+        }
         $filename =~ s{//+}{/}g;
         $filename =~ s{/+$}{} if $filename ne '/';
-        next if $filename !~ m{^/};
         $self->add_expected_base_one($filename);
         $entries++;
+        $required_entries++
+          if $self->{apply} && $label eq "$required_set$release";
     }
-
-    my $closed = close($cmd);
-
-    # an empty or failed inventory is a false-positive generator; apply mode
-    # must refuse to continue rather than remove a file that is merely
-    # missing from an incomplete reference set
-    $self->err( 1, "can't read base locatedb" ) if $entries == 0;
-    if ( !$closed ) {
-        $self->err( 1, "locate failed; refusing to apply an incomplete base" )
-          if $self->{apply};
-        $self->warning("locate failed; base inventory may be incomplete");
+    my $read_error = $cmd->error;
+    my $closed     = close($cmd);
+    if (  !$closed
+        || $read_error
+        || !$entries
+        || $malformed
+        || ( $self->{apply} && !$required_entries ) )
+    {
+        my $msg = "incomplete or incompatible locate inventory '$database'";
+        $self->err( 1, $msg )
+          if $self->{apply} || ( !$entries && $required_set eq 'base' );
+        $self->warning($msg);
     }
 }
 
@@ -436,13 +457,15 @@ sub add_expected_dev($self) {
         }
     }
 
-    my $closed = close($dev);
+    my $read_error = $dev->error;
+    my $closed     = close($dev);
 
     # restore the working directory, changed to /dev for MAKEDEV(8)
     chdir('/')
       || $self->err( 1, "can't chdir back to /: $!" );
 
-    $self->err( 1, "can't execute /dev/MAKEDEV" ) if !$closed;
+    $self->err( 1, "can't read /dev/MAKEDEV output" )
+      if !$closed || $read_error;
 
     $self->err( 1, "MAKEDEV(8) produced no expected /dev entries" )
       if $dev_entries == 0;
@@ -452,7 +475,7 @@ sub add_expected_dev($self) {
 # runtime trees. Unknown service names add nothing; a failed listing is fatal
 # in apply mode because it would make the expected inventory incomplete.
 sub add_expected_rcctl($self) {
-    open( my $cmd, '-|', 'rcctl', 'ls', 'on' )
+    open( my $cmd, '-|', '/usr/sbin/rcctl', 'ls', 'on' )
       || $self->err( 1, "can't read enabled daemons and services" );
     while (<$cmd>) {
         chomp;
@@ -530,8 +553,9 @@ sub add_expected_rcctl($self) {
         }
     }
 
-    my $closed = close($cmd);
-    if ( !$closed ) {
+    my $read_error = $cmd->error;
+    my $closed     = close($cmd);
+    if ( !$closed || $read_error ) {
         $self->err( 1,
             "rcctl failed; refusing to apply an incomplete service list" )
           if $self->{apply};
