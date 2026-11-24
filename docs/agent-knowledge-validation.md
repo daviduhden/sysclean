@@ -27,8 +27,11 @@ prove tests/agent_knowledge_validator/test_validator.pl
 `worktree` includes staged and unstaged tracked changes, untracked non-ignored
 files, renames, and deletions. `range` compares the merge base of `BASE_REF`
 and `HEAD_REF` with `HEAD_REF`. For committed comparisons, fetch sufficient
-history and pass the base and head commit SHAs; the validator resolves their
-common ancestor itself.
+history and pass the base and head commit SHAs. Run range validation from a
+clean checkout of `HEAD_REF`, since the canonical validator reads configuration
+and instructions from disk while computing the diff from Git objects. The
+manual workflow uses the selected checkout as the head and requires
+`base_ref` to produce a non-empty comparison.
 
 Exit codes are consistent across repositories: `0` means no policy errors,
 `1` means a policy violation, and `2` means invalid arguments, configuration,

@@ -234,7 +234,7 @@ subtest 'remove_path' => sub {
     my ($out) = capture_both( sub { $sc->remove_path($file) } );
     ok( !-e $file, 'file removed' );
     is( $sc->{removed}{files}, 1, 'file removal counted' );
-    like( $out, qr/^unlink /m, 'unlink is reported' );
+    like( $out, qr/^\[INFO\] unlink /m, 'unlink is reported' );
 
     # symbolic link must be removed, not followed
     my $target = "$dir/target";

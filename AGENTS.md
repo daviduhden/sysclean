@@ -377,7 +377,8 @@ core Perl modules, and publishes contract version `1.0.0`. All
 adopting repositories share the same CLI, AK001-AK006 identifiers, output
 schema, and exit codes (`0` pass, `1` policy failure, `2` execution/configuration
 error). To compare committed revisions locally, pass both with
-`--scope range --base BASE_REF --head HEAD_REF`; compare from their merge base.
+`--scope range --base BASE_REF --head HEAD_REF` from a clean checkout of
+`HEAD_REF`; compare from their merge base.
 
 Read [Agent Knowledge Validation Contract](docs/agent-knowledge-validation.md)
 for the complete rules, JSON schema, optional repository configuration,
@@ -387,8 +388,9 @@ canonical script and black-box Perl suite byte-identical across adopting
 repositories. Repository-specific requirements belong in the documented TOML
 configuration or a stable `AKX...` extension, never in a private fork of the
 shared rules. All workflows are manual-only: start them from the Actions
-tab or with `gh workflow run`; the agent workflow runs the same tests and
-worktree validation and does not edit files or require secrets.
+tab or with `gh workflow run`. The agent workflow requires `base_ref` to
+produce a non-empty committed comparison and runs worktree validation, range
+validation, and portable regression tests without requiring secrets.
 
 ### Mandatory Definition of Done
 

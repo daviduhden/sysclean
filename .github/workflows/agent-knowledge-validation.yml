@@ -2,6 +2,11 @@ name: Agent Knowledge Validation
 
 on:
   workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Base Git reference or commit to compare with this checkout
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -24,3 +29,26 @@ jobs:
         run: prove tests/agent_knowledge_validator/test_validator.pl
       - name: Run canonical worktree validation
         run: perl scripts/validate-agent-knowledge.pl --scope worktree
+      - name: Validate changes in the selected revision
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          worktree=$(git status --porcelain)
+          if [ -n "$worktree" ]; then
+            echo "Range validation requires a clean checkout." >&2
+            exit 1
+          fi
+          base=$(git rev-parse --verify --end-of-options "${BASE_REF}^{commit}")
+          head=$(git rev-parse --verify HEAD)
+          merge_base=$(git merge-base "$base" "$head")
+          changed=$(git diff --name-only "$merge_base" "$head")
+          if [ -z "$changed" ]; then
+            echo "The selected base yields an empty comparison." >&2
+            exit 1
+          fi
+          printf 'Validating changes from %s with head %s (merge base %s)\n' "$base" "$head" "$merge_base"
+          perl scripts/validate-agent-knowledge.pl --scope range --base "$base" --head "$head"
+      - name: Run portable sysclean regressions
+        run: |
+          perl -Iregress/stubs -c sysclean.pl
+          prove regress/apply.t

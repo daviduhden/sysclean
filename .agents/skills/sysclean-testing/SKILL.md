@@ -62,10 +62,11 @@ Use instead:
   calendar date. Header-only edits do not require a date change.
 
 Run `perl scripts/validate-agent-knowledge.pl --scope worktree` to validate instruction
-structure and local references. Add `--base <git-revision>` to require a
-substantive agent/skill instruction change alongside repository changes.
-GitHub Actions runs that mode only on manual dispatch; run it locally against the
-target branch before completing a change. It validates structure and detectable
+structure, local references, and uncommitted changes. To check committed
+changes, use `--scope range --base BASE_REF --head HEAD_REF` from a clean
+checkout of `HEAD_REF`. Manual GitHub Actions dispatch requires `base_ref`
+and runs both validation scopes and the portable regression.
+The validator checks structure and detectable
 references, but cannot judge whether the update is factually relevant.
 
 `regress/apply.t` covers path validation, ignored/expected refusal,
