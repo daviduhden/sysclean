@@ -46,7 +46,7 @@ Use instead:
 * `File::Temp` directories;
 * stub `OpenBSD::*` modules;
 * fixture account/package data;
-* a disposable virtual machine or jail dedicated to the test.
+* a disposable OpenBSD virtual machine dedicated to native tests.
 
 ## Existing targets
 
@@ -76,6 +76,9 @@ action queuing, `-x -a` protection for used libraries, the path-only
 account helpers or system paths.
 
 ## Test matrix
+
+Use [Native OpenBSD validation](../../../docs/openbsd-validation.md) for the
+disposable stable/current VM matrix, including real sandbox and package APIs.
 
 Read-only:
 
@@ -189,7 +192,7 @@ review before reporting the task complete:
   reusable update is warranted for this skill, identify which other applicable
   agent/skill file carries the maintenance update.
 * Run `perl scripts/validate-agent-knowledge.pl --scope worktree` and, before completion,
-  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. --head HEAD Also run
+  `perl scripts/validate-agent-knowledge.pl --scope range --base <target-branch> --head HEAD`. Also run
   relevant checks listed by this skill. Report checks only when they were run.
 * If this skill, another skill, or agent policy changes, review the complete
   instruction set once and repeat validation only to correct a discovered
